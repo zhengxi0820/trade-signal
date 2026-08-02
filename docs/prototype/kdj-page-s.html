@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KDJ 交易位信号 — 页面原型（S：交汇点 1.5 倍宽）</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus/dist/index.css">
+  <style>
+    /* B 版基底：浅灰底 + 白色卡片，边框 / 圆角 / 轻阴影 */
+    body { margin: 0; background: #f2f4f8; font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #app { max-width: 1280px; margin: 0 auto; padding: 16px 24px; }
+    .el-card { border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05); }
+    .el-card__header { border-bottom: 1px solid #ebeef5; padding-bottom: 12px; font-weight: 600; font-size: 15px; }
+    .el-card__body { padding-top: 12px; }
+    .toolbar { background: #fff; border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05); padding: 16px 20px; margin-bottom: 16px; }
+    .period-btns { margin-bottom: 16px; }
+    .selector-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .selector-row .label { color: #606266; font-size: 14px; }
+    .param-panel { margin-top: 16px; border-top: 1px dashed #dcdfe6; padding-top: 16px; }
+    .param-panel .el-form-item { margin-bottom: 12px; }
+    /* 两个表格模块同高，行数不足的下方留白 */
+    .all-card { margin-bottom: 16px; }
+    .lists { display: flex; gap: 16px; align-items: stretch; }
+    .list-card { flex: 1; min-width: 0; }
+    .chart-card { margin-top: 16px; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; }
+    .chart-head { display: flex; justify-content: space-between; align-items: center; }
+    /* 周期名字体与左侧标题一致 */
+    .chart-head .period { color: #303133; font-weight: 600; font-size: 15px; }
+    .col-checks { display: flex; flex-direction: column; gap: 4px; }
+    /* 末列右内边距：纵向滚动条只压住空白，右侧留出呼吸空间 */
+    .el-table th:last-child .cell,
+    .el-table td:last-child .cell { padding-right: 48px; }
+    /*
+     * 所有股票：列是 min-width 自适应（总宽一定够），横向滚动条没有存在意义。
+     * Windows 经典滚动条（约17px）会让 el-table 表头补 gutter 列导致总宽溢出，
+     * 从而冒出横向滚动条——直接禁掉横向滚动。
+     */
+    .all-card .el-table__body-wrapper { overflow-x: hidden; }
+    #kdjChart { width: 100%; height: 560px; }
+    .proto-tag { font-size: 12px; color: #909399; margin-left: 8px; }
+    tr.clickable-row { cursor: pointer; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- 顶部工具区 -->
+  <div class="toolbar">
+    <div class="period-btns">
+      <el-radio-group v-model="kdjType" size="large">
+        <el-radio-button value="0">日线</el-radio-button>
+        <el-radio-button value="1">周线</el-radio-button>
+        <el-radio-button value="2">月线</el-radio-button>
+        <el-radio-button value="3">季线</el-radio-button>
+      </el-radio-group>
+      <span class="proto-tag">原型 mock 数据，非真实行情</span>
+    </div>
+
+    <div class="selector-row">
+      <span class="label">截止周期</span>
+
+      <el-date-picker
+        v-if="kdjType === '0'"
+        v-model="dailyDate"
+        type="date"
+        format="YYYY/MM/DD"
+        value-format="YYYYMMDD"
+        placeholder="选择交易日"
+        :disabled-date="isNotTradeDate"
+        :clearable="false"
+      ></el-date-picker>
+
+      <el-select v-if="kdjType === '1'" v-model="weekValue" placeholder="选择周" style="width: 280px">
+        <el-option
+          v-for="w in weekOptions"
+          :key="w.min"
+          :label="fmtSlash(w.min) + ' - ' + fmtSlash(w.max)"
+          :value="w.min + '-' + w.max"
+        ></el-option>
+      </el-select>
+
+      <el-date-picker
+        v-if="kdjType === '2'"
+        v-model="monthValue"
+        type="month"
+        format="YYYY/MM"
+        value-format="YYYYMM"
+        placeholder="选择月份"
+        :disabled-date="monthDisabled"
+        :clearable="false"
+      ></el-date-picker>
+
+      <template v-if="kdjType === '3'">
+        <el-select v-model="quarterYear" placeholder="年份" style="width: 120px">
+          <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y"></el-option>
+        </el-select>
+        <el-radio-group v-model="quarter">
+          <el-radio-button value="1" :disabled="quarterDisabled(1)">第一季度</el-radio-button>
+          <el-radio-button value="2" :disabled="quarterDisabled(2)">第二季度</el-radio-button>
+          <el-radio-button value="3" :disabled="quarterDisabled(3)">第三季度</el-radio-button>
+          <el-radio-button value="4" :disabled="quarterDisabled(4)">第四季度</el-radio-button>
+        </el-radio-group>
+      </template>
+
+      <el-button type="primary" plain icon="Setting" @click="paramOpen = !paramOpen">
+        参数设置
+      </el-button>
+      <el-button type="primary" icon="Search" @click="mockQuery">查询</el-button>
+    </div>
+
+    <!-- 参数面板：内嵌展开，非弹窗；默认值与后端一致 -->
+    <el-collapse-transition>
+      <div v-show="paramOpen" class="param-panel">
+        <el-form inline label-width="170px" size="default">
+          <el-divider content-position="left">KDJ 参数</el-divider>
+          <el-form-item label="N（RSV 窗口）">
+            <el-input-number v-model="params.n" :min="1" style="width: 140px"></el-input-number>
+          </el-form-item>
+          <el-form-item label="M1（K 平滑）">
+            <el-input-number v-model="params.m1" :min="1" style="width: 140px"></el-input-number>
+          </el-form-item>
+          <el-form-item label="M2（D 平滑）">
+            <el-input-number v-model="params.m2" :min="1" style="width: 140px"></el-input-number>
+          </el-form-item>
+
+          <el-divider content-position="left">信号限制项</el-divider>
+          <el-form-item label="上次金叉交汇上限">
+            <el-input-number v-model="params.lastGoldCrossMax" style="width: 140px"></el-input-number>
+          </el-form-item>
+          <el-form-item label="当前金叉交汇上限">
+            <el-input-number v-model="params.currGoldCrossMax" style="width: 140px"></el-input-number>
+          </el-form-item>
+          <el-form-item label="死叉交汇上限">
+            <el-input-number v-model="params.lastDeathCrossMax" style="width: 140px"></el-input-number>
+          </el-form-item>
+          <el-form-item label="金叉最小间距">
+            <el-input-number v-model="params.goldInternalMin" :min="1" style="width: 140px"></el-input-number>
+          </el-form-item>
+          <el-form-item label="金叉最大间距">
+            <el-input-number v-model="params.goldInternalMax" :min="1" style="width: 140px"></el-input-number>
+          </el-form-item>
+          <el-form-item label="收盘价更低（开关）">
+            <el-switch v-model="params.openClosePriceLimit"></el-switch>
+          </el-form-item>
+          <el-form-item label="交汇点更高（开关）">
+            <el-switch v-model="params.goldCrossLimit"></el-switch>
+          </el-form-item>
+
+          <el-divider content-position="left">行情口径</el-divider>
+          <el-form-item label="复权类型">
+            <el-radio-group v-model="params.adjust">
+              <el-radio-button value="qfq">前复权</el-radio-button>
+              <el-radio-button value="hfq">后复权</el-radio-button>
+              <el-radio-button value="none">不复权</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+        </el-form>
+      </div>
+    </el-collapse-transition>
+  </div>
+
+  <!-- 所有股票：始终展示全部列（无列设置），min-width 自适应填满整行，更高一些 -->
+  <el-card class="all-card" shadow="never">
+    <template #header>
+      <div class="card-head">
+        <span>所有股票（{{ allStockList.length }}）</span>
+      </div>
+    </template>
+    <el-table ref="allTable" :data="allStockList" size="small" highlight-current-row
+              height="420"
+              @current-change="row => onSelect(row, 'all')"
+              :row-class-name="() => 'clickable-row'">
+      <el-table-column v-for="col in allColumns" :key="col.prop"
+                       :prop="col.prop" :label="col.label" :min-width="col.minWidth"
+                       :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
+    </el-table>
+  </el-card>
+
+  <!-- 金叉 / 交易位 两个列表：列可勾选、横向纵向滚动、无分页；选中互斥 -->
+  <div class="lists">
+    <el-card class="list-card" shadow="never">
+      <template #header>
+        <div class="card-head">
+          <span>金叉股票（{{ goldCrossList.length }}）</span>
+          <el-popover placement="bottom-end" :width="160" trigger="click">
+            <template #reference>
+              <el-button size="small" text icon="Operation">列设置</el-button>
+            </template>
+            <el-checkbox-group v-model="goldCols" class="col-checks">
+              <el-checkbox v-for="c in allColumns" :key="c.prop" :value="c.prop">{{ c.label }}</el-checkbox>
+            </el-checkbox-group>
+          </el-popover>
+        </div>
+      </template>
+      <el-table ref="goldTable" :data="goldCrossList" size="small" highlight-current-row
+                height="300"
+                @current-change="row => onSelect(row, 'gold')"
+                :row-class-name="() => 'clickable-row'">
+        <el-table-column v-for="col in visibleGoldCols" :key="col.prop"
+                         :prop="col.prop" :label="col.label" :width="col.width"
+                         :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card class="list-card" shadow="never">
+      <template #header>
+        <div class="card-head">
+          <span>交易位股票（{{ tradeSignalList.length }}）</span>
+          <el-popover placement="bottom-end" :width="160" trigger="click">
+            <template #reference>
+              <el-button size="small" text icon="Operation">列设置</el-button>
+            </template>
+            <el-checkbox-group v-model="signalCols" class="col-checks">
+              <el-checkbox v-for="c in allColumns" :key="c.prop" :value="c.prop">{{ c.label }}</el-checkbox>
+            </el-checkbox-group>
+          </el-popover>
+        </div>
+      </template>
+      <el-table ref="signalTable" :data="tradeSignalList" size="small" highlight-current-row
+                height="300"
+                @current-change="row => onSelect(row, 'signal')"
+                :row-class-name="() => 'clickable-row'">
+        <el-table-column v-for="col in visibleSignalCols" :key="col.prop"
+                         :prop="col.prop" :label="col.label" :width="col.width"
+                         :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
+      </el-table>
+    </el-card>
+  </div>
+
+  <!-- 价格走势 + KDJ 联动图：标题左侧「代码 价格走势 / KDJ」，周期名放最右端 -->
+  <el-card v-if="chartStock" class="chart-card" shadow="never">
+    <template #header>
+      <div class="chart-head">
+        <span>{{ chartStock.code }}&nbsp;&nbsp;价格走势 / KDJ</span>
+        <span class="period">{{ periodName }}</span>
+      </div>
+    </template>
+    <div id="kdjChart"></div>
+  </el-card>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus/dist/locale/zh-cn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+const { createApp } = Vue;
+
+// mock「今天」= 2026-08-01：最新已完结交易日 = 2026-07-31
+const MOCK_TODAY = new Date(2026, 7, 1);
+const MOCK_LAST_TRADE_DATE = new Date(2026, 6, 31);
+// 图表默认一屏展示的周期数
+const WINDOW_SIZE = 60;
+// mock 序列长度（> WINDOW_SIZE，用于演示拖动）
+const SERIES_LEN = 120;
+
+// K/D/J 线条颜色（对齐示例图：K 黄、D 紫、J 蓝）
+const COLOR_K = '#E6A23C';
+const COLOR_D = '#8E44AD';
+const COLOR_J = '#2E86DE';
+// 金叉锚图标颜色（死叉用灰）
+const COLOR_ANCHOR_GOLD = '#D4A017';
+const COLOR_ANCHOR_GRAY = '#909399';
+// 锚形图标（path 来自手画的简化锚：圆环 + 竖杆 + 横杆 + 双锚爪）
+const ANCHOR_PATH = 'path://M12 3a2 2 0 1 1 -0.01 0Z M12 7v13 M8 10h8 M5 13c0 4.5 3 7 7 7s7-2.5 7-7';
+
+function fmtYmd(d) {
+  return d.getFullYear()
+    + String(d.getMonth() + 1).padStart(2, '0')
+    + String(d.getDate()).padStart(2, '0');
+}
+
+// 显示用日期格式：yyyymmdd → yyyy/mm/dd（前后端交互仍用 yyyymmdd）
+function fmtSlash(ymd) {
+  const s = String(ymd);
+  if (s.length === 8) return s.slice(0, 4) + '/' + s.slice(4, 6) + '/' + s.slice(6, 8);
+  if (s.length === 6) return s.slice(0, 4) + '/' + s.slice(4, 6);
+  return s;
+}
+
+createApp({
+  data() {
+    return {
+      kdjType: '0',
+
+      dailyDate: '20260731',
+      weekValue: '20260727-20260731',
+      monthValue: '202607',
+      quarterYear: 2026,
+      quarter: '2',
+
+      paramOpen: false,
+      params: {
+        n: 9, m1: 3, m2: 3,
+        lastGoldCrossMax: 20,
+        currGoldCrossMax: 50,
+        lastDeathCrossMax: 50,
+        goldInternalMin: 5,
+        goldInternalMax: 15,
+        openClosePriceLimit: true,
+        goldCrossLimit: true,
+        adjust: 'qfq'
+      },
+
+      allColumns: [
+        { prop: 'code',       label: '代码',   width: 90, minWidth: 80 },
+        { prop: 'name',       label: '名称',   width: 100, minWidth: 100 },
+        // 收盘价 ~ 交汇点 8 列等宽（所有股票表间距均匀，对齐金叉股票的观感）
+        { prop: 'close',      label: '收盘价', width: 90, minWidth: 100 },
+        { prop: 'open',       label: '开盘价', width: 90, minWidth: 100 },
+        { prop: 'high',       label: '最高价', width: 90, minWidth: 100 },
+        { prop: 'low',        label: '最低价', width: 90, minWidth: 100 },
+        { prop: 'k',          label: 'K',      width: 70, minWidth: 100 },
+        { prop: 'd',          label: 'D',      width: 70, minWidth: 100 },
+        { prop: 'j',          label: 'J',      width: 70, minWidth: 100 },
+        { prop: 'crossValue', label: '交汇点', width: 150, minWidth: 150 }
+      ],
+      goldCols: ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
+      signalCols: ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
+
+      chartStock: null
+      // echarts 实例与图表数据为非响应式（created 中初始化），避免 Vue 代理破坏 ECharts 内部机制
+    };
+  },
+  created() {
+    this.chart = null;
+    this._cd = null; // { labels, bars, kdj }
+    this._raf = null; // datazoom 事件的 rAF 合帧标记
+  },
+  computed: {
+    periodName() {
+      return { '0': '日线', '1': '周线', '2': '月线', '3': '季线' }[this.kdjType];
+    },
+    visibleGoldCols() {
+      return this.allColumns.filter(c => this.goldCols.includes(c.prop));
+    },
+    visibleSignalCols() {
+      return this.allColumns.filter(c => this.signalCols.includes(c.prop));
+    },
+    tradeDates() {
+      const set = new Set();
+      const d = new Date(2026, 0, 1);
+      while (d <= MOCK_LAST_TRADE_DATE) {
+        const day = d.getDay();
+        if (day !== 0 && day !== 6) set.add(fmtYmd(d));
+        d.setDate(d.getDate() + 1);
+      }
+      return set;
+    },
+    weekOptions() {
+      const weeks = [];
+      const end = new Date(MOCK_LAST_TRADE_DATE);
+      for (let i = 0; i < 16; i++) {
+        const e = new Date(end); e.setDate(end.getDate() - 7 * i);
+        const s = new Date(e);   s.setDate(e.getDate() - 4);
+        const min = fmtYmd(s), max = fmtYmd(e);
+        if (min === '20260706') continue; // 该周无交易日，跳过
+        weeks.push({ min, max });
+      }
+      return weeks;
+    },
+    yearOptions() {
+      const years = [];
+      for (let y = 2026; y >= 2000; y--) years.push(y);
+      return years;
+    },
+    goldCrossList() {
+      return [
+        { code: '600519', name: '贵州茅台', close: '1688.00', open: '1672.10', high: '1701.50', low: '1665.00', k: '46.32', d: '43.15', j: '52.66', crossValue: '44.73' },
+        { code: '000001', name: '平安银行', close: '11.24',   open: '11.10',   high: '11.36',   low: '11.02',   k: '38.05', d: '35.90', j: '42.35', crossValue: '36.98' },
+        { code: '300750', name: '宁德时代', close: '187.55',  open: '185.20',  high: '189.80',  low: '183.44',  k: '52.41', d: '50.02', j: '57.19', crossValue: '51.22' },
+        { code: '601318', name: '中国平安', close: '42.87',   open: '42.50',   high: '43.12',   low: '42.31',   k: '29.66', d: '27.31', j: '34.36', crossValue: '28.49' },
+        { code: '600036', name: '招商银行', close: '33.15',   open: '32.90',   high: '33.40',   low: '32.71',   k: '41.20', d: '39.88', j: '43.84', crossValue: '40.54' },
+        { code: '000858', name: '五粮液',   close: '128.40',  open: '127.55',  high: '129.90',  low: '126.80',  k: '35.12', d: '33.40', j: '38.56', crossValue: '34.26' },
+        { code: '601899', name: '紫金矿业', close: '18.62',   open: '18.40',   high: '18.88',   low: '18.25',   k: '44.03', d: '42.11', j: '47.87', crossValue: '43.07' },
+        { code: '600900', name: '长江电力', close: '27.35',   open: '27.20',   high: '27.60',   low: '27.05',   k: '31.58', d: '29.74', j: '35.26', crossValue: '30.66' },
+        { code: '002594', name: '比亚迪',   close: '245.10',  open: '242.00',  high: '248.60',  low: '240.35',  k: '48.77', d: '46.20', j: '53.91', crossValue: '47.49' },
+        { code: '601012', name: '隆基绿能', close: '15.83',   open: '15.70',   high: '16.02',   low: '15.61',   k: '27.44', d: '25.90', j: '30.52', crossValue: '26.67' },
+        { code: '600276', name: '恒瑞医药', close: '46.52',   open: '46.10',   high: '46.95',   low: '45.88',   k: '39.90', d: '38.15', j: '43.40', crossValue: '39.03' },
+        { code: '000333', name: '美的集团', close: '68.20',   open: '67.80',   high: '68.90',   low: '67.42',   k: '33.26', d: '31.72', j: '36.34', crossValue: '32.49' }
+      ];
+    },
+    tradeSignalList() {
+      return [
+        { code: '601318', name: '中国平安', close: '42.87', open: '42.50', high: '43.12', low: '42.31', k: '29.66', d: '27.31', j: '34.36', crossValue: '28.49' },
+        { code: '600036', name: '招商银行', close: '33.15', open: '32.90', high: '33.40', low: '32.71', k: '41.20', d: '39.88', j: '43.84', crossValue: '40.54' },
+        { code: '601012', name: '隆基绿能', close: '15.83', open: '15.70', high: '16.02', low: '15.61', k: '27.44', d: '25.90', j: '30.52', crossValue: '26.67' }
+      ];
+    },
+    // 所有股票：金叉列表 + 无信号的股票（K/D/J/交汇点为空）
+    allStockList() {
+      return this.goldCrossList.concat([
+        { code: '601398', name: '工商银行', close: '6.12',  open: '6.08',  high: '6.15',  low: '6.05',  k: '55.20', d: '56.10', j: '53.40', crossValue: '' },
+        { code: '600030', name: '中信证券', close: '19.86', open: '19.70', high: '20.02', low: '19.55', k: '61.33', d: '60.02', j: '63.95', crossValue: '' },
+        { code: '002415', name: '海康威视', close: '28.44', open: '28.30', high: '28.66', low: '28.10', k: '48.90', d: '50.15', j: '46.40', crossValue: '' }
+      ]);
+    }
+  },
+  watch: {
+    kdjType() {
+      this.clearSelection();
+    }
+  },
+  mounted() {
+    // 截图验证辅助：?type=1 指定周期（0-3），?panel=1 展开参数面板，?demo=1 自动选中首行并弹 tooltip，?zoom=15-55 模拟拖动后的视野
+    const q = new URLSearchParams(location.search);
+    if (q.get('type')) this.kdjType = q.get('type');
+    if (q.get('panel')) this.paramOpen = true;
+    if (q.get('demo')) {
+      this.$nextTick(() => {
+        // ?from=all 时演示从「所有股票」选中（验证三表互斥与图表联动）
+        if (q.get('from') === 'all') {
+          this.onSelect(this.allStockList[this.allStockList.length - 1], 'all');
+        } else {
+          this.onSelect(this.goldCrossList[0], 'gold');
+        }
+        setTimeout(() => {
+          if (!this.chart) return;
+          const z = (q.get('zoom') || '').split('-');
+          if (z.length === 2) {
+            this.chart.dispatchAction({ type: 'dataZoom', start: +z[0], end: +z[1] });
+          }
+        }, 800);
+      });
+    }
+  },
+  methods: {
+    isNotTradeDate(date) {
+      if (date > MOCK_LAST_TRADE_DATE) return true;
+      return !this.tradeDates.has(fmtYmd(date));
+    },
+    monthDisabled(date) {
+      return date >= new Date(2026, 7, 1);
+    },
+    quarterDisabled(q) {
+      if (this.quarterYear < 2026) return false;
+      if (this.quarterYear > 2026) return true;
+      return q >= 3;
+    },
+    // 三个列表选中互斥：选一边时清掉另两边的蓝行
+    onSelect(row, from) {
+      if (!row) return;
+      if (from !== 'gold') this.$refs.goldTable.setCurrentRow();
+      if (from !== 'signal') this.$refs.signalTable.setCurrentRow();
+      if (from !== 'all') this.$refs.allTable.setCurrentRow();
+      this.chartStock = row;
+      this.$nextTick(() => {
+        this.renderChart(row.code);
+        // 选中任何列表的行都跳转出对应图表：滚动到图表卡片，保证可见
+        const el = document.querySelector('.chart-card');
+        el && el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    },
+    clearSelection() {
+      this.$refs.goldTable && this.$refs.goldTable.setCurrentRow();
+      this.$refs.signalTable && this.$refs.signalTable.setCurrentRow();
+      this.$refs.allTable && this.$refs.allTable.setCurrentRow();
+      this.chartStock = null;
+    },
+    mockQuery() {
+      ElementPlus.ElMessage.info('原型演示：正式版将按当前条件重新请求接口');
+    },
+    // 暴露给模板（周线选择器显示用）
+    fmtSlash,
+    genLabels() {
+      const labels = [];
+      if (this.kdjType === '0') {
+        const d = new Date(MOCK_LAST_TRADE_DATE);
+        while (labels.length < SERIES_LEN) {
+          const day = d.getDay();
+          if (day !== 0 && day !== 6) labels.unshift(fmtSlash(fmtYmd(d)));
+          d.setDate(d.getDate() - 1);
+        }
+      } else if (this.kdjType === '1') {
+        const e = new Date(MOCK_LAST_TRADE_DATE);
+        for (let i = 0; i < SERIES_LEN; i++) {
+          const we = new Date(e); we.setDate(e.getDate() - 7 * i);
+          const ws = new Date(we); ws.setDate(we.getDate() - 4);
+          labels.unshift(fmtSlash(fmtYmd(ws)) + '~' + fmtSlash(fmtYmd(we)));
+        }
+      } else if (this.kdjType === '2') {
+        let y = 2026, m = 7;
+        for (let i = 0; i < SERIES_LEN; i++) {
+          labels.unshift(fmtSlash(y + String(m).padStart(2, '0')));
+          if (--m === 0) { m = 12; y--; }
+        }
+      } else {
+        let y = 2026, q = 2;
+        for (let i = 0; i < SERIES_LEN; i++) {
+          labels.unshift(y + 'Q' + q);
+          if (--q === 0) { q = 4; y--; }
+        }
+      }
+      return labels;
+    },
+    mockBars(seed, count) {
+      let s = 0;
+      for (const ch of seed) s += ch.charCodeAt(0);
+      const bars = [];
+      let prev = 1.6 + (s % 50) / 50;
+      for (let i = 0; i < count; i++) {
+        const drift = Math.sin(i / 7 + s) * 0.05 + Math.sin(i / 3 + s * 1.7) * 0.025;
+        const open = prev;
+        const close = +(open * (1 + drift)).toFixed(3);
+        const high = +(Math.max(open, close) * (1 + Math.abs(Math.sin(i * 2.3 + s)) * 0.02)).toFixed(3);
+        const low  = +(Math.min(open, close) * (1 - Math.abs(Math.cos(i * 1.9 + s)) * 0.02)).toFixed(3);
+        bars.push({ open: +open.toFixed(3), close, low, high });
+        prev = close;
+      }
+      return bars;
+    },
+    mockKdj(seed, count) {
+      const points = [];
+      let d = 50;
+      let s = 0;
+      for (const ch of seed) s += ch.charCodeAt(0);
+      for (let i = 0; i < count; i++) {
+        const wave = Math.sin(i / 4 + s) * 30 + Math.sin(i / 9 + s * 2) * 15;
+        const k = Math.max(2, Math.min(98, 50 + wave));
+        d = d + (k - d) / 3;
+        const j = 3 * k - 2 * d;
+        points.push({ idx: i, k: +k.toFixed(2), d: +d.toFixed(2), j: +j.toFixed(2) });
+      }
+      for (let i = 1; i < points.length; i++) {
+        const p = points[i - 1], c = points[i];
+        if (p.k < p.d && c.k > c.d) { c.crossType = 'gold';  c.crossValue = +((p.k + c.k) / 2).toFixed(2); }
+        if (p.k > p.d && c.k < c.d) { c.crossType = 'death'; c.crossValue = +((p.k + c.k) / 2).toFixed(2); }
+      }
+      return points;
+    },
+    renderChart(code) {
+      const labels = this.genLabels();
+      const bars = this.mockBars(code, labels.length);
+      const kdj = this.mockKdj(code, labels.length);
+      this._cd = { labels, bars, kdj };
+
+      const last = kdj[kdj.length - 1];
+      // KDJ 标题：N/M1/M2 + 最新 K/D/J，各自着色（K 黄、D 紫、J 蓝）
+      const kdjTitle = '{t|KDJ(' + this.params.n + ',' + this.params.m1 + ',' + this.params.m2 + ')：}'
+        + ' {k|K:' + last.k + '} {d|D:' + last.d + '} {j|J:' + last.j + '}';
+
+      // 默认视野：截止周期钉在最右端；数据不足一屏则左对齐展示全部
+      const len = labels.length;
+      const start = len <= WINDOW_SIZE ? 0 : (1 - WINDOW_SIZE / len) * 100;
+
+      // 无左侧数字；网格全部用 graphic 画成屏幕固定的「闭合实线方块」：
+      // 价格图 3 列 × 4 行、KDJ 图 3 列 × 2 行，四边闭合实线
+      // y 轴上下各留 8% 空白，极值不贴边
+      const pad = v => (v.max - v.min) * 0.08;
+      const plainYAxis = {
+        scale: true,
+        min: v => v.min - pad(v),
+        max: v => v.max + pad(v),
+        axisLabel: { show: false },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false }
+      };
+
+      if (this.chart) this.chart.dispose();
+      this.chart = echarts.init(document.getElementById('kdjChart'));
+      const cw = document.getElementById('kdjChart').clientWidth;
+      const gl = 40, gw = cw - 80;
+      // [top, height, rows]：价格 4 行、KDJ 2 行；列都是 3 列（2 条内部竖线）
+      // 注意：graphic 元素必须全部带唯一 id——无 id 元素按索引合并，
+      // 会导致 updateRangeMarks 里按 id 更新的动态文本对位错乱（G 版回归 bug）
+      const gridRects = [[30, 230, 4], [360, 160, 2]];
+      const gridLines = [];
+      let glId = 0;
+      for (const [gt, gh, rows] of gridRects) {
+        // 四边闭合实线边框
+        gridLines.push({
+          id: 'gl' + glId++,
+          type: 'rect', z: 1, silent: true,
+          shape: { x: gl, y: gt, width: gw, height: gh },
+          style: { fill: 'none', stroke: '#dcdfe6', lineWidth: 1 }
+        });
+        // 内部横线
+        for (let r = 1; r < rows; r++) {
+          const y = gt + (gh * r) / rows;
+          gridLines.push({
+            id: 'gl' + glId++,
+            type: 'line', z: 1, silent: true,
+            shape: { x1: gl, y1: y, x2: gl + gw, y2: y },
+            style: { stroke: '#f0f0f0', lineWidth: 1 }
+          });
+        }
+        // 内部竖线（3 列 → 2 条）
+        for (const x of [gl + gw / 3, gl + (2 * gw) / 3]) {
+          gridLines.push({
+            id: 'gl' + glId++,
+            type: 'line', z: 1, silent: true,
+            shape: { x1: x, y1: gt, x2: x, y2: gt + gh },
+            style: { stroke: '#f0f0f0', lineWidth: 1 }
+          });
+        }
+      }
+      this.chart.setOption({
+        // 关闭动画，拖动时即时跟手
+        animation: false,
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross' },
+          formatter: ps => {
+            if (!ps || !ps.length) return '';
+            let html = '周期：' + ps[0].axisValue;
+            for (const p of ps) {
+              if (p.seriesName === 'K线') {
+                const v = p.value; // [open, close, low, high]
+                html += '<br/>' + p.marker + ' 开：' + v[1] + ' 收：' + v[2] + ' 低：' + v[3] + ' 高：' + v[4];
+              } else {
+                html += '<br/>' + p.marker + ' ' + p.seriesName + '：' + p.value;
+              }
+            }
+            return html;
+          }
+        },
+        // K/D/J 图例：与 KDJ(9,3,3) 标题同一行，靠右
+        legend: { data: ['K', 'D', 'J'], top: 328, right: 40 },
+        grid: [
+          { left: 40, right: 40, top: 30, height: 230 },
+          { left: 40, right: 40, top: 360, height: 160 }
+        ],
+        xAxis: [
+          {
+            // 日期轴标签不交给 ECharts：改由 graphic 文本绘制视野两端日期（见 updateRangeMarks）
+            type: 'category', gridIndex: 0, data: labels,
+            axisLabel: { show: false },
+            axisTick: { show: false },
+            axisLine: { show: false }
+          },
+          { type: 'category', gridIndex: 1, data: labels, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false } }
+        ],
+        yAxis: [
+          Object.assign({ gridIndex: 0 }, plainYAxis),
+          Object.assign({ gridIndex: 1 }, plainYAxis)
+        ],
+        dataZoom: [{
+          type: 'inside',
+          xAxisIndex: [0, 1],
+          moveOnMouseMove: true,
+          moveOnMouseWheel: false,
+          // 滚轮 = 缩放日期区间（比例尺收放）；拖动 = 平移
+          zoomOnMouseWheel: true,
+          // throttle 0：拖动实时跟手，不滞后
+          throttle: 0,
+          start, end: 100
+        }],
+        series: [
+          {
+            name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
+            data: bars.map(b => [b.open, b.close, b.low, b.high]),
+            itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
+          },
+          { name: 'K', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_K, data: kdj.map(p => p.k) },
+          { name: 'D', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_D, data: kdj.map(p => p.d) },
+          { name: 'J', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_J, lineStyle: { opacity: 0.6 }, data: kdj.map(p => p.j) }
+        ],
+        graphic: gridLines.concat([
+          {
+            id: 'kdjTitle',
+            type: 'text', left: 40, top: 332,
+            style: {
+              text: kdjTitle,
+              rich: {
+                t: { fill: '#303133', fontWeight: 600, fontSize: 13 },
+                k: { fill: COLOR_K, fontWeight: 600, fontSize: 13 },
+                d: { fill: COLOR_D, fontWeight: 600, fontSize: 13 },
+                j: { fill: COLOR_J, fontWeight: 600, fontSize: 13 }
+              }
+            }
+          },
+          // 最高 / 最低交汇点：放在 KDJ 图最左（上 / 下），随视野动态更新
+          { id: 'crossHi', type: 'text', left: 0, top: 362, style: { text: '', fill: '#909399', fontSize: 12 } },
+          { id: 'crossLo', type: 'text', left: 0, top: 503, style: { text: '', fill: '#909399', fontSize: 12 } },
+          // 视野两端日期：放在两图中间的左 / 右两侧，随拖动更新
+          { id: 'dateL', type: 'text', left: 40, top: 298, style: { text: '', fill: '#909399', fontSize: 12 } },
+          { id: 'dateR', type: 'text', right: 40, top: 298, style: { text: '', fill: '#909399', fontSize: 12, align: 'right' } }
+        ])
+      }, true);
+
+      // 拖动时每次 datazoom 都做 setOption 会掉帧：用 rAF 合帧，每帧最多重算一次标注
+      this.chart.on('datazoom', () => {
+        if (this._raf) return;
+        this._raf = requestAnimationFrame(() => {
+          this._raf = null;
+          this.updateRangeMarks();
+        });
+      });
+      this.updateRangeMarks();
+    },
+    // 可见范围动态标注：价格最高/最低（点+短横线样式）、KDJ 最高/最低交汇（左侧文字）
+    updateRangeMarks() {
+      if (!this.chart || !this._cd) return;
+      const { labels, bars, kdj } = this._cd;
+      const len = bars.length;
+      const dz = this.chart.getOption().dataZoom[0];
+      // 可见下标：startValue 可能是数字下标、字符串类目值或空，统一转成下标
+      const toIdx = (v, pct, isEnd) => {
+        if (typeof v === 'number' && isFinite(v)) return v;
+        if (typeof v === 'string') {
+          const i = labels.indexOf(v);
+          if (i >= 0) return i;
+        }
+        return isEnd ? Math.ceil(len * pct / 100) - 1 : Math.floor(len * pct / 100);
+      };
+      let si = toIdx(dz.startValue, dz.start, false);
+      let ei = toIdx(dz.endValue, dz.end, true);
+      si = Math.max(0, Math.min(len - 1, Math.round(si)));
+      ei = Math.max(0, Math.min(len - 1, Math.round(ei)));
+      if (ei < si) ei = si;
+
+      let hi = -Infinity, lo = Infinity, hiIdx = si, loIdx = si;
+      for (let i = si; i <= ei; i++) {
+        if (bars[i].high > hi) { hi = bars[i].high; hiIdx = i; }
+        if (bars[i].low < lo)  { lo = bars[i].low;  loIdx = i; }
+      }
+      let cHi = null, cLo = null;
+      for (let i = si; i <= ei; i++) {
+        const p = kdj[i];
+        if (!p.crossType) continue;
+        if (!cHi || p.crossValue > cHi.crossValue) cHi = p;
+        if (!cLo || p.crossValue < cLo.crossValue) cLo = p;
+      }
+
+      // 价格极值：极值点小圆点 + 一截短横线 + 线端数值（对齐示例图样式）
+      // 线段端点夹在可见窗口内，避免极值在视野边缘时整段被裁剪
+      const seg = 4;
+      const extremeLine = {
+        silent: true,
+        symbol: ['circle', 'none'],
+        symbolSize: 5,
+        lineStyle: { color: '#909399', width: 1 },
+        emphasis: { disabled: true }
+      };
+      const priceLines = [
+        [
+          { coord: [hiIdx, hi] },
+          { coord: [Math.min(hiIdx + seg, ei), hi],
+            label: { show: true, formatter: String(hi), position: 'end', color: '#303133', fontWeight: 600, distance: 4 } }
+        ],
+        [
+          { coord: [loIdx, lo] },
+          { coord: [Math.max(loIdx - seg, si), lo],
+            label: { show: true, formatter: String(lo), position: 'start', color: '#303133', fontWeight: 600, distance: 4 } }
+        ]
+      ];
+
+      // KDJ：金叉 / 死叉改为锚形小图标（金叉金色、死叉灰色），不带数字，统一放在线条下方
+      const kdjMarks = kdj.filter(p => p.crossType).map(p => ({
+        coord: [p.idx, p.k],
+        symbol: ANCHOR_PATH,
+        symbolSize: 14,
+        symbolOffset: [0, 12],
+        itemStyle: {
+          color: 'rgba(0,0,0,0)',
+          borderColor: p.crossType === 'gold' ? COLOR_ANCHOR_GOLD : COLOR_ANCHOR_GRAY,
+          borderWidth: 1.5
+        },
+        label: { show: false }
+      }));
+
+      this.chart.setOption({
+        series: [
+          { name: 'K线', markLine: Object.assign({ data: priceLines }, extremeLine), markPoint: { data: [] } },
+          { name: 'K', markPoint: { data: kdjMarks } }
+        ],
+        graphic: [
+          { id: 'crossHi', style: { text: cHi ? String(cHi.crossValue) : '' } },
+          { id: 'crossLo', style: { text: cLo ? String(cLo.crossValue) : '' } },
+          { id: 'dateL', style: { text: labels[si] } },
+          { id: 'dateR', style: { text: labels[ei] } }
+        ]
+      });
+    }
+  }
+}).use(ElementPlus, { locale: ElementPlusLocaleZhCn }).mount('#app');
+</script>
+</body>
+</html>

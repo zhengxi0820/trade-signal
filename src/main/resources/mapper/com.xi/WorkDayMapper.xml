@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xi.orm.mapper.WorkDayMapper">
+
+    <resultMap id="WorkDayDOResultMap" type="com.xi.orm.entity.WorkDayDO">
+        <id column="ID" property="id"/>
+        <result column="MARKET" property="market"/>
+        <result column="TRADE_DATE" property="tradeDate"/>
+        <result column="CREATE_DATE" property="createDate"/>
+        <result column="CREATED_AT" property="createdAt"/>
+        <result column="UPDATED_AT" property="updatedAt"/>
+    </resultMap>
+
+    <select id="queryAll" resultMap="WorkDayDOResultMap">
+        select * from work_day
+        <where>
+            <if test="market != null and market != ''">
+                and market = #{market}
+            </if>
+            <if test="tradeDate != null and tradeDate != ''">
+                and trade_date = #{tradeDate}
+            </if>
+        </where>
+        order by trade_date
+    </select>
+
+</mapper>

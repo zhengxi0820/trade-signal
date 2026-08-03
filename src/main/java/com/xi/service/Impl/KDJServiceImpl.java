@@ -8,8 +8,10 @@ import com.xi.model.query.StockQuoteQuery;
 import com.xi.model.query.WorkDayQuery;
 import com.xi.model.vo.CrossStockVO;
 import com.xi.model.vo.WorkDayVO;
+import com.xi.orm.entity.StockInfoDO;
 import com.xi.orm.entity.StockQuoteDO;
 import com.xi.orm.entity.WorkDayDO;
+import com.xi.orm.mapper.StockInfoMapper;
 import com.xi.orm.mapper.StockQuoteMapper;
 import com.xi.orm.mapper.WorkDayMapper;
 import com.xi.service.KDJService;
@@ -21,11 +23,14 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class KDJServiceImpl implements KDJService {
 
-    private static final String DEFAULT_ADJUST = "qfq";
+    private static final String DEFAULT_ADJUST = "1";
     private static final String DEFAULT_KDJ_TYPE = "0";
     private static final BigDecimal DEFAULT_N = new BigDecimal("9");
     private static final BigDecimal DEFAULT_M = new BigDecimal("3");
@@ -41,6 +46,9 @@ public class KDJServiceImpl implements KDJService {
 
     @Autowired
     private WorkDayMapper workDayMapper;
+
+    @Autowired
+    private StockInfoMapper stockInfoMapper;
 
     private final KDJHandler kdjHandler = new KDJHandler();
 
@@ -102,6 +110,7 @@ public class KDJServiceImpl implements KDJService {
     @Override
     public List<CrossStockVO> getAllStocks(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
+        Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         for (String code : targetCodes(kdjParam)) {
             kdjParam.setCode(code);
@@ -121,7 +130,7 @@ public class KDJServiceImpl implements KDJService {
             } else if (death != null) {
                 cross = death;
             }
-            result.add(buildCrossStockVO(bars, kdjList, cross, kdjParam, dailies.get(0).getName()));
+            result.add(buildCrossStockVO(bars, kdjList, cross, kdjParam, infoMap.get(code)));
         }
         return result;
     }
@@ -129,6 +138,7 @@ public class KDJServiceImpl implements KDJService {
     @Override
     public List<CrossStockVO> getGold(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
+        Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         for (String code : targetCodes(kdjParam)) {
             kdjParam.setCode(code);
@@ -140,7 +150,7 @@ public class KDJServiceImpl implements KDJService {
             List<KDJHandler.KdjValue> kdjList = kdjHandler.calculate(bars, kdjParam.getN(), kdjParam.getM1(), kdjParam.getM2());
             KDJHandler.CrossPoint gold = kdjHandler.goldenCrossAt(kdjList, kdjList.size() - 1);
             if (gold != null && withinCurrGoldCrossMax(gold, kdjParam.getCurrGoldCrossMax())) {
-                result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, dailies.get(0).getName()));
+                result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, infoMap.get(code)));
             }
         }
         return result;
@@ -150,6 +160,7 @@ public class KDJServiceImpl implements KDJService {
     public List<CrossStockVO> getTradeSignalStockList(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
         fillTradeSignalDefaults(kdjParam);
+        Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         for (String code : targetCodes(kdjParam)) {
             kdjParam.setCode(code);
@@ -161,7 +172,7 @@ public class KDJServiceImpl implements KDJService {
             List<KDJHandler.KdjValue> kdjList = kdjHandler.calculate(bars, kdjParam.getN(), kdjParam.getM1(), kdjParam.getM2());
             if (kdjHandler.isTradeSignal(bars, kdjList, kdjParam)) {
                 KDJHandler.CrossPoint gold = kdjHandler.goldenCrossAt(kdjList, kdjList.size() - 1);
-                result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, dailies.get(0).getName()));
+                result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, infoMap.get(code)));
             }
         }
         return result;
@@ -223,13 +234,15 @@ public class KDJServiceImpl implements KDJService {
     }
 
     private CrossStockVO buildCrossStockVO(List<KDJHandler.PeriodBar> bars, List<KDJHandler.KdjValue> kdjList,
-                                           KDJHandler.CrossPoint cross, KDJParam kdjParam, String name) {
+                                           KDJHandler.CrossPoint cross, KDJParam kdjParam, StockInfoDO info) {
         KDJHandler.PeriodBar lastBar = bars.get(bars.size() - 1);
         KDJHandler.KdjValue lastKdj = kdjList.get(kdjList.size() - 1);
         CrossStockVO vo = new CrossStockVO();
         vo.setCode(kdjParam.getCode());
-        vo.setName(name);
-        vo.setMarket(kdjParam.getMarket());
+        if (info != null) {
+            vo.setName(info.getName());
+            vo.setMarket(info.getMarket());
+        }
         vo.setOpen(lastBar.open);
         vo.setHigh(lastBar.high);
         vo.setLow(lastBar.low);
@@ -272,6 +285,14 @@ public class KDJServiceImpl implements KDJService {
             return List.of(kdjParam.getCode());
         }
         return stockQuoteMapper.queryDistinctCodes(kdjParam.getAdjust());
+    }
+
+    /**
+     * 股票基础信息（name/market 唯一来源），按 code 索引
+     */
+    private Map<String, StockInfoDO> stockInfoMap() {
+        return stockInfoMapper.queryAll().stream()
+                .collect(Collectors.toMap(StockInfoDO::getCode, Function.identity(), (a, b) -> a));
     }
 
     private boolean withinCurrGoldCrossMax(KDJHandler.CrossPoint gold, BigDecimal currGoldCrossMax) {

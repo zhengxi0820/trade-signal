@@ -18,16 +18,6 @@ public class StockQuoteDO {
     private String code;
 
     /**
-     * 股票名称
-     */
-    private String name;
-
-    /**
-     * 市场标识
-     */
-    private String market;
-
-    /**
      * 开盘价
      */
     private BigDecimal open;

@@ -5,8 +5,6 @@
     <resultMap id="StockQuoteDOResultMap" type="com.xi.orm.entity.StockQuoteDO">
         <id column="ID" property="id"/>
         <result column="CODE" property="code"/>
-        <result column="NAME" property="name"/>
-        <result column="MARKET" property="market"/>
         <result column="OPEN" property="open"/>
         <result column="HIGH" property="high"/>
         <result column="LOW" property="low"/>

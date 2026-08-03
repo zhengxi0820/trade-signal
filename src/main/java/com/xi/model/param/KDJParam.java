@@ -18,7 +18,7 @@ public class KDJParam {
     private String market;
 
     /**
-     * 复权类型，默认 qfq（前复权）
+     * 复权类型："0"=无复权、"1"=前复权（默认）、"2"=后复权（预留）
      */
     private String adjust;
 

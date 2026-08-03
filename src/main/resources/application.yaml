@@ -4,8 +4,10 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/trade_signal?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     driver-class-name: com.mysql.cj.jdbc.Driver
-    username: trade_signal
-    password: trade_signal
+    # 凭据走环境变量，生产必须显式设置（见 SECURITY.md 2.7）；默认值仅连本机 dev 库
+    # 注意：用 TRADE_SIGNAL_ 前缀，本机 shell 里 DB_* 被其他项目占用，直接复用会串库
+    username: ${TRADE_SIGNAL_DB_USER:trade_signal}
+    password: ${TRADE_SIGNAL_DB_PASSWORD:trade_signal}
 
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml

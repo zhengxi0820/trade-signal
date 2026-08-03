@@ -38,6 +38,12 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 - 金叉/死叉判断用端点严格不等，交汇点用 `KDJHandler.calcKdCrossValue`（附A 修正版），不要重造。
 - `KDJHandler` 保持纯函数：要测试直接 JUnit 对拍，不要在里头注入任何 bean。
 
+## 安全
+
+- 凭据只走环境变量（Java 侧 `TRADE_SIGNAL_DB_USER/PASSWORD`，scripts 侧 `DB_*` 且 `DB_PASSWORD` 无代码默认值），明文不进仓；yaml 里的缺省值仅是本机 dev 库。
+- 入参白名单校验在 `KDJServiceImpl.validateParam`，新增枚举/开关参数要同步加。
+- **上公网前必办**（详见 `docs/SECURITY.md` 3.1 检查单）：接口加认证与限流、HTTPS+安全头（注意 `static/index.html` 是内联脚本+CDN 形态，严格 CSP 会白屏，需先改造再下发）、生产错误收口、凭据全部换新。
+
 ## 测试约定
 
 - 计算逻辑改动必须同步 `KDJHandlerTest`（构造合成 K/D 序列逐条规则对拍）。

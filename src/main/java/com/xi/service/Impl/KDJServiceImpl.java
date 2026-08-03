@@ -16,15 +16,19 @@ import com.xi.orm.mapper.StockQuoteMapper;
 import com.xi.orm.mapper.WorkDayMapper;
 import com.xi.service.KDJService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -40,6 +44,15 @@ public class KDJServiceImpl implements KDJService {
     private static final BigDecimal DEFAULT_GOLD_INTERNAL_MIN = new BigDecimal("5");
     private static final BigDecimal DEFAULT_GOLD_INTERNAL_MAX = new BigDecimal("15");
     private static final String SWITCH_ON = "1";
+
+    // 入参白名单（SECURITY.md 2.4：外部输入校验类型/长度/白名单）
+    private static final Set<String> ADJUST_VALUES = Set.of("0", "1", "2");
+    private static final Set<String> KDJ_TYPE_VALUES = Set.of("0", "1", "2", "3");
+    private static final Set<String> SWITCH_VALUES = Set.of("0", "1");
+    private static final Pattern CODE_PATTERN = Pattern.compile("^[0-9A-Za-z]{1,12}$");
+    private static final Pattern MARKET_PATTERN = Pattern.compile("^[0-9A-Za-z]{1,10}$");
+    // yyyymm 或 yyyymmdd
+    private static final Pattern DATE_PATTERN = Pattern.compile("^\\d{6}(\\d{2})?$");
 
     @Autowired
     private StockQuoteMapper stockQuoteMapper;
@@ -87,6 +100,8 @@ public class KDJServiceImpl implements KDJService {
 
     @Override
     public List<WorkDayVO> getPeriods(WorkDayParam param) {
+        requireEnum("kdjType", param.getKdjType(), KDJ_TYPE_VALUES);
+        requirePattern("market", param.getMarket(), MARKET_PATTERN);
         if (!StringUtils.hasText(param.getKdjType())) {
             param.setKdjType(DEFAULT_KDJ_TYPE);
         }
@@ -300,6 +315,7 @@ public class KDJServiceImpl implements KDJService {
     }
 
     private void fillCommonDefaults(KDJParam kdjParam) {
+        validateParam(kdjParam);
         if (!StringUtils.hasText(kdjParam.getAdjust())) {
             kdjParam.setAdjust(DEFAULT_ADJUST);
         }
@@ -314,6 +330,45 @@ public class KDJServiceImpl implements KDJService {
         }
         if (kdjParam.getM2() == null) {
             kdjParam.setM2(DEFAULT_M);
+        }
+    }
+
+    /**
+     * 入参白名单校验：枚举值、字符集、日期格式。不合法直接 400，不进查询。
+     */
+    private void validateParam(KDJParam p) {
+        requireEnum("adjust", p.getAdjust(), ADJUST_VALUES);
+        requireEnum("kdjType", p.getKdjType(), KDJ_TYPE_VALUES);
+        requireEnum("openClosePriceLimit", p.getOpenClosePriceLimit(), SWITCH_VALUES);
+        requireEnum("goldCrossLimit", p.getGoldCrossLimit(), SWITCH_VALUES);
+        requirePattern("code", p.getCode(), CODE_PATTERN);
+        requirePattern("market", p.getMarket(), MARKET_PATTERN);
+        requirePattern("tradeDate", p.getTradeDate(), DATE_PATTERN);
+        requirePattern("tradeDateMin", p.getTradeDateMin(), DATE_PATTERN);
+        requirePattern("tradeDateMax", p.getTradeDateMax(), DATE_PATTERN);
+        requirePositive("n", p.getN());
+        requirePositive("m1", p.getM1());
+        requirePositive("m2", p.getM2());
+    }
+
+    private void requireEnum(String field, String value, Set<String> allowed) {
+        if (StringUtils.hasText(value) && !allowed.contains(value)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    field + " 非法取值: " + value);
+        }
+    }
+
+    private void requirePattern(String field, String value, Pattern pattern) {
+        if (StringUtils.hasText(value) && !pattern.matcher(value).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    field + " 格式非法: " + value);
+        }
+    }
+
+    private void requirePositive(String field, BigDecimal value) {
+        if (value != null && value.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    field + " 必须为正数: " + value);
         }
     }
 

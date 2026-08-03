@@ -12,8 +12,10 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # akshare/pymysql/tqdm
 ```
 
-数据库连接走环境变量，缺省本机开发值：`DB_HOST=127.0.0.1 DB_PORT=3306
-DB_NAME=trade_signal DB_USER=trade_signal DB_PASSWORD=trade_signal`。
+数据库连接走环境变量：`DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` 有本机开发缺省，
+**`DB_PASSWORD` 无缺省必须显式设置**（凭据不落代码，SECURITY.md 2.7）。本机 shell 全局
+驻留了其他项目的 `DB_*`，每次运行都要显式覆盖全套，例：`DB_NAME=trade_signal
+DB_USER=trade_signal DB_PASSWORD=<本机 dev 库密码> python -m fetch.stock_list`。
 
 ## 用法
 

@@ -1,0 +1,4 @@
+# scripts/ 数据灌入管线依赖（用 scripts/.venv 安装）
+akshare
+pymysql
+tqdm

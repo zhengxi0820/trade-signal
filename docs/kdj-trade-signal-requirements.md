@@ -145,14 +145,14 @@ public CrossPoint calcKdCrossValue(BigDecimal preK, BigDecimal preD, BigDecimal 
 | 端点 | 用途 | 说明 |
 |---|---|---|
 | `GET /kdj/series` | 单票某周期 KDJ 序列 + 交叉点标注 | 供前端价格走势图（OHLC）+ KDJ 线图展示；金叉标注受 currGoldCrossMax 过滤（缺省不限） |
-| `GET /kdj/gold-cross` | 某周期出现金叉的股票列表 | code 为空 = 全市场扫描；页面默认展示调用（kdjType=0 + qfq + 最新已完结交易日） |
+| `GET /kdj/gold-cross` | 某周期出现金叉的股票列表 | code 为空 = 全市场扫描；页面默认展示调用（kdjType=0 + adjust="1"（前复权）+ 最新已完结交易日） |
 | `GET /kdj/trade-signal` | 某周期出现交易位的股票列表 | 同上，先判金叉再按 4.2 六条过滤 |
 | `GET /kdj/all-stocks` | 全部股票的截止周期行情与 KDJ | 不过滤；截止周期有交叉时 crossValue 有值；供「所有股票」列表 |
 | `GET /kdj/periods` | 可选周期列表（已完结周期） | 基于 work_day 交易日历推导，供前端截止周期选择器 |
 
 ### 5.1 入参与出参
 
-参数表、出参字段、日期字段规则、调用示例以 [trade-signal-api.md](trade-signal-api.md) 为唯一权威来源，本节不再重复。与业务规则相关的默认值：kdjType="0"、adjust=qfq、n/m1/m2=9/3/3、lastGoldCrossMax=20、currGoldCrossMax（交易位 50 / 展示不限）、lastDeathCrossMax=50、goldInternalMin/Max=5/15、两个开关默认 "1"。
+参数表、出参字段、日期字段规则、调用示例以 [trade-signal-api.md](trade-signal-api.md) 为唯一权威来源，本节不再重复。与业务规则相关的默认值：kdjType="0"、adjust="1"（前复权）、n/m1/m2=9/3/3、lastGoldCrossMax=20、currGoldCrossMax（交易位 50 / 展示不限）、lastDeathCrossMax=50、goldInternalMin/Max=5/15、两个开关默认 "1"。
 
 ## 6. 性能
 
@@ -164,4 +164,4 @@ public CrossPoint calcKdCrossValue(BigDecimal preK, BigDecimal preD, BigDecimal 
 - 不做定时任务。
 - 不做独立前端工程（前端为内嵌静态页）。
 - KDJ 值、金叉/死叉/交易位事件不落库。
-- 不做外部行情数据接入（假设 stock_quote 数据已由其他链路写入，含不复权/前复权/后复权三类；work_day 交易日历同理）。
+- 不做外部行情数据接入（Java 主体只读库；数据灌入由 `scripts/` python 管线承担，口径见 [trade-signal-data-pipeline.md](trade-signal-data-pipeline.md)）。

@@ -34,7 +34,7 @@
 |---|---|---|---|---|
 | code | String | series 必填；其余选填 | 空 = 全市场 | 股票代码 |
 | market | String | 否 | — | 市场标识 |
-| adjust | String | 否 | qfq | 复权类型：qfq 前复权 / hfq 后复权 / 不复权（以 stock_quote 数据为准） |
+| adjust | String | 否 | "1" | 复权类型："0"=无复权、"1"=前复权、"2"=后复权（预留，以 stock_quote 数据为准） |
 | kdjType | String | 否 | "0" | 周期类型："0"=日、"1"=周、"2"=月、"3"=季 |
 | tradeDate | String | 否 | 最新已完结周期 | 截止周期（日度、月度使用） |
 | tradeDateMin | String | 否 | 同上 | 截止周期下限（周度、季度使用） |

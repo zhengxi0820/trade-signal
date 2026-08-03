@@ -1,8 +1,12 @@
-HELP.md
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+
+### Python（scripts/ 数据管线） ###
+scripts/.venv/
+__pycache__/
+*.pyc
 
 ### STS ###
 .apt_generated

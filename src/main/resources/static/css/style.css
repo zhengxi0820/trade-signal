@@ -1,0 +1,35 @@
+    body { margin: 0; background: #f2f4f8; font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #app { max-width: 1280px; margin: 0 auto; padding: 16px 24px; }
+    .el-card { border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05); }
+    .el-card__header { border-bottom: 1px solid #ebeef5; padding-bottom: 12px; font-weight: 600; font-size: 15px; }
+    .el-card__body { padding-top: 12px; }
+    .toolbar { background: #fff; border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05); padding: 16px 20px; margin-bottom: 16px; }
+    .period-btns { margin-bottom: 16px; }
+    .selector-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .selector-row .label { color: #606266; font-size: 14px; }
+    .param-panel { margin-top: 16px; border-top: 1px dashed #dcdfe6; padding-top: 16px; }
+    .param-panel .el-form-item { margin-bottom: 12px; }
+    .all-card { margin-bottom: 16px; }
+    .lists { display: flex; gap: 16px; align-items: stretch; }
+    .list-card { flex: 1; min-width: 0; }
+    .chart-card { margin-top: 16px; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; }
+    .chart-head { display: flex; justify-content: space-between; align-items: center; }
+    .chart-head .period { color: #303133; font-weight: 600; font-size: 15px; }
+    .col-checks { display: flex; flex-direction: column; gap: 4px; }
+    /* 末列右内边距：纵向滚动条只压住空白，右侧留出呼吸空间 */
+    .el-table th:last-child .cell,
+    .el-table td:last-child .cell { padding-right: 48px; }
+    /*
+     * 所有股票：列是 min-width 自适应（总宽一定够），横向滚动条没有存在意义。
+     * Windows 经典滚动条（约17px）会让 el-table 表头补 gutter 列导致总宽溢出，
+     * 从而冒出横向滚动条——直接禁掉横向滚动。
+     */
+    .all-card .el-table__body-wrapper { overflow-x: hidden; }
+    #kdjChart { width: 100%; height: 560px; }
+    tr.clickable-row { cursor: pointer; }
+    /* 密钥认证遮罩：未认证时盖住整页，数据接口本就 401，页壳不含数据 */
+    .auth-overlay { position: fixed; inset: 0; background: #f2f4f8; z-index: 3000; display: flex; align-items: center; justify-content: center; }
+    .auth-card { width: 340px; }
+    .auth-title { text-align: center; font-weight: 600; font-size: 16px; margin-bottom: 16px; }
+    .auth-error { color: #F56C6C; font-size: 13px; margin-top: 10px; text-align: center; }

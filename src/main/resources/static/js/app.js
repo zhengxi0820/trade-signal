@@ -1,0 +1,605 @@
+const { createApp } = Vue;
+
+// 图表默认一屏展示的周期数
+const WINDOW_SIZE = 60;
+
+// K/D/J 线条颜色（K 黄、D 紫、J 蓝）
+const COLOR_K = '#E6A23C';
+const COLOR_D = '#8E44AD';
+const COLOR_J = '#2E86DE';
+// 金叉锚图标颜色（死叉用灰）
+const COLOR_ANCHOR_GOLD = '#D4A017';
+const COLOR_ANCHOR_GRAY = '#909399';
+// 锚形图标（path：圆环 + 竖杆 + 横杆 + 双锚爪）
+const ANCHOR_PATH = 'path://M12 3a2 2 0 1 1 -0.01 0Z M12 7v13 M8 10h8 M5 13c0 4.5 3 7 7 7s7-2.5 7-7';
+
+// 显示用日期格式：yyyymmdd → yyyy/mm/dd（前后端交互仍用 yyyymmdd）
+function fmtSlash(ymd) {
+  const s = String(ymd || '');
+  if (s.length === 8) return s.slice(0, 4) + '/' + s.slice(4, 6) + '/' + s.slice(6, 8);
+  if (s.length === 6) return s.slice(0, 4) + '/' + s.slice(4, 6);
+  return s;
+}
+
+// 数字展示：保留两位小数；null / 空串 → 空
+function fmt2(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  return isNaN(n) ? String(v) : n.toFixed(2);
+}
+
+// 任一接口返回 401 时回调（由 app 注册）：弹出密钥遮罩
+let onUnauthorized = null;
+
+async function getJson(url) {
+  const resp = await fetch(url);
+  if (resp.status === 401) {
+    if (onUnauthorized) onUnauthorized();
+    throw new Error('未认证或会话已过期');
+  }
+  if (!resp.ok) throw new Error(url + ' → HTTP ' + resp.status);
+  return resp.json();
+}
+
+createApp({
+  data() {
+    return {
+      // 认证状态：默认未认证（遮罩盖住整页），/auth/check 通过后才进入
+      authed: false,
+      authKey: '',
+      authError: '',
+      authLoading: false,
+
+      kdjType: '0',
+
+      // 截止周期选择器（选项来自 /kdj/periods，时间倒序）
+      periods: [],
+      dailyDate: '',
+      weekValue: '',
+      monthValue: '',
+      quarterYear: null,
+      quarter: '1',
+
+      paramOpen: false,
+      querying: false,
+      params: {
+        n: 9, m1: 3, m2: 3,
+        lastGoldCrossMax: 20,
+        currGoldCrossMax: 50,
+        lastDeathCrossMax: 50,
+        goldInternalMin: 5,
+        goldInternalMax: 15,
+        openClosePriceLimit: true,
+        goldCrossLimit: true,
+        adjust: '1'
+      },
+
+      allColumns: [
+        { prop: 'code',       label: '代码',   width: 90,  minWidth: 80 },
+        { prop: 'name',       label: '名称',   width: 100, minWidth: 100 },
+        { prop: 'close',      label: '收盘价', width: 90,  minWidth: 100, fmt: true },
+        { prop: 'open',       label: '开盘价', width: 90,  minWidth: 100, fmt: true },
+        { prop: 'high',       label: '最高价', width: 90,  minWidth: 100, fmt: true },
+        { prop: 'low',        label: '最低价', width: 90,  minWidth: 100, fmt: true },
+        { prop: 'k',          label: 'K',      width: 70,  minWidth: 100, fmt: true },
+        { prop: 'd',          label: 'D',      width: 70,  minWidth: 100, fmt: true },
+        { prop: 'j',          label: 'J',      width: 70,  minWidth: 100, fmt: true },
+        { prop: 'crossValue', label: '交汇点', width: 150, minWidth: 150, fmt: true }
+      ],
+      goldCols: ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
+      signalCols: ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
+
+      allStockList: [],
+      goldCrossList: [],
+      tradeSignalList: [],
+      loadingAll: false,
+      loadingGold: false,
+      loadingSignal: false,
+      loadingChart: false,
+
+      chartStock: null
+      // echarts 实例与图表数据为非响应式（created 中初始化），避免 Vue 代理破坏 ECharts 内部机制
+    };
+  },
+  created() {
+    this.chart = null;
+    this._cd = null; // { labels, bars, kdj }
+    this._raf = null; // datazoom 事件的 rAF 合帧标记
+  },
+  computed: {
+    periodName() {
+      return { '0': '日线', '1': '周线', '2': '月线', '3': '季线' }[this.kdjType];
+    },
+    visibleGoldCols() {
+      return this.allColumns.filter(c => this.goldCols.includes(c.prop));
+    },
+    visibleSignalCols() {
+      return this.allColumns.filter(c => this.signalCols.includes(c.prop));
+    },
+    // 日线：可交易日集合（periods 已剔除未来日期与未完结周期）
+    tradeDates() {
+      return new Set(this.periods.map(p => p.tradeDate));
+    },
+    // 月线：可选月份集合（yyyymm）
+    monthSet() {
+      return new Set(this.periods.map(p => String(p.tradeDate).slice(0, 6)));
+    },
+    // 季线：年份 → 可选季度集合（跳过缺 tradeDateMin/Max 的条目，防御脏数据产生 NaN）
+    quarterMap() {
+      const map = {};
+      for (const p of this.periods) {
+        if (!p.tradeDateMin || !p.tradeDateMax) continue;
+        const y = +String(p.tradeDateMin).slice(0, 4);
+        const q = Math.ceil(+String(p.tradeDateMax).slice(4, 6) / 3);
+        (map[y] = map[y] || new Set()).add(q);
+      }
+      return map;
+    },
+    yearOptions() {
+      return Object.keys(this.quarterMap).map(Number).sort((a, b) => b - a);
+    }
+  },
+  watch: {
+    kdjType() {
+      this.clearSelection();
+      // 切换周期类型时先清空旧周期数据：新数据返回前选择器渲染空态，
+      // 避免旧结构的 periods（如日线数据缺 tradeDateMin）喂给季线选择器产生 NaN 选项
+      this.periods = [];
+      this.initPeriods();
+    },
+    quarterYear() {
+      // 切换年份后，当前季度不可选时回退到该年最新可选季度
+      const set = this.quarterMap[this.quarterYear];
+      if (set && !set.has(+this.quarter)) {
+        this.quarter = String(Math.max(...set));
+      }
+    }
+  },
+  created() {
+    // 任一业务接口 401 → 回到密钥遮罩
+    onUnauthorized = () => { this.authed = false; };
+  },
+  async mounted() {
+    // 进门检查：已认证直接初始化，未认证停在遮罩
+    try {
+      const resp = await fetch('/auth/check');
+      this.authed = resp.ok;
+    } catch (e) {
+      this.authed = false;
+    }
+    if (this.authed) {
+      this.initPeriods();
+    }
+  },
+  methods: {
+    fmtSlash,
+    // 表格数字列格式化
+    fmtNum(row, column, cellValue) {
+      return fmt2(cellValue);
+    },
+
+    // ---- 认证 ----
+    async login() {
+      if (!this.authKey) {
+        this.authError = '请输入访问密钥';
+        return;
+      }
+      this.authLoading = true;
+      this.authError = '';
+      try {
+        const resp = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: this.authKey })
+        });
+        if (resp.ok) {
+          this.authed = true;
+          this.authKey = '';
+          this.initPeriods();
+        } else if (resp.status === 429) {
+          this.authError = '尝试次数过多，已锁定 15 分钟';
+        } else {
+          this.authError = '密钥错误';
+        }
+      } catch (e) {
+        this.authError = '网络异常，请重试';
+      } finally {
+        this.authLoading = false;
+      }
+    },
+
+    // ---- 周期选择器 ----
+    async initPeriods() {
+      try {
+        this.periods = await getJson('/kdj/periods?kdjType=' + this.kdjType);
+      } catch (e) {
+        this.periods = [];
+        ElementPlus.ElMessage.error('可选周期加载失败：' + e.message);
+      }
+      this.applyPeriodDefault();
+      this.loadLists();
+    },
+    // periods 为时间倒序，[0] 即最新已完结周期
+    applyPeriodDefault() {
+      const latest = this.periods[0];
+      if (!latest) {
+        this.dailyDate = '';
+        this.weekValue = '';
+        this.monthValue = '';
+        this.quarterYear = null;
+        return;
+      }
+      if (this.kdjType === '0') {
+        this.dailyDate = latest.tradeDate;
+      } else if (this.kdjType === '1') {
+        this.weekValue = latest.tradeDateMin + '-' + latest.tradeDateMax;
+      } else if (this.kdjType === '2') {
+        this.monthValue = String(latest.tradeDate).slice(0, 6);
+      } else {
+        this.quarterYear = +String(latest.tradeDateMin).slice(0, 4);
+        this.quarter = String(Math.ceil(+String(latest.tradeDateMax).slice(4, 6) / 3));
+      }
+    },
+    isNotTradeDate(date) {
+      const ymd = date.getFullYear()
+        + String(date.getMonth() + 1).padStart(2, '0')
+        + String(date.getDate()).padStart(2, '0');
+      return !this.tradeDates.has(ymd);
+    },
+    monthDisabled(date) {
+      const ym = date.getFullYear() + String(date.getMonth() + 1).padStart(2, '0');
+      return !this.monthSet.has(ym);
+    },
+    quarterDisabled(q) {
+      const set = this.quarterMap[this.quarterYear];
+      return !set || !set.has(q);
+    },
+
+    // ---- 查询参数组装（与接口文档一致）----
+    buildQuery() {
+      const p = new URLSearchParams();
+      const pms = this.params;
+      p.set('kdjType', this.kdjType);
+      p.set('adjust', pms.adjust);
+      p.set('n', pms.n);
+      p.set('m1', pms.m1);
+      p.set('m2', pms.m2);
+      p.set('lastGoldCrossMax', pms.lastGoldCrossMax);
+      p.set('currGoldCrossMax', pms.currGoldCrossMax);
+      p.set('lastDeathCrossMax', pms.lastDeathCrossMax);
+      p.set('goldInternalMin', pms.goldInternalMin);
+      p.set('goldInternalMax', pms.goldInternalMax);
+      p.set('openClosePriceLimit', pms.openClosePriceLimit ? '1' : '0');
+      p.set('goldCrossLimit', pms.goldCrossLimit ? '1' : '0');
+      // 三字段日期规则：日/月 tradeDate；周/季 tradeDateMin + tradeDateMax
+      if (this.kdjType === '0') {
+        if (this.dailyDate) p.set('tradeDate', this.dailyDate);
+      } else if (this.kdjType === '1') {
+        const [min, max] = (this.weekValue || '-').split('-');
+        if (min && max) { p.set('tradeDateMin', min); p.set('tradeDateMax', max); }
+      } else if (this.kdjType === '2') {
+        const hit = this.periods.find(x => String(x.tradeDate).slice(0, 6) === this.monthValue);
+        if (hit) p.set('tradeDate', hit.tradeDate);
+      } else {
+        const hit = this.periods.find(x =>
+          +String(x.tradeDateMin).slice(0, 4) === this.quarterYear
+          && Math.ceil(+String(x.tradeDateMax).slice(4, 6) / 3) === +this.quarter);
+        if (hit) { p.set('tradeDateMin', hit.tradeDateMin); p.set('tradeDateMax', hit.tradeDateMax); }
+      }
+      return p;
+    },
+
+    // ---- 三个列表 ----
+    async loadLists() {
+      const q = this.buildQuery().toString();
+      this.querying = true;
+      this.loadingAll = this.loadingGold = this.loadingSignal = true;
+      const fill = (url, key, loadingKey) =>
+        getJson(url)
+          .then(list => { this[key] = list; })
+          .catch(e => {
+            this[key] = [];
+            ElementPlus.ElMessage.error(url.split('?')[0] + ' 查询失败：' + e.message);
+          })
+          .finally(() => { this[loadingKey] = false; });
+      await Promise.all([
+        fill('/kdj/all-stocks?' + q, 'allStockList', 'loadingAll'),
+        fill('/kdj/gold-cross?' + q, 'goldCrossList', 'loadingGold'),
+        fill('/kdj/trade-signal?' + q, 'tradeSignalList', 'loadingSignal')
+      ]);
+      this.querying = false;
+    },
+
+    // ---- 选中联动：三表互斥 + 拉取序列画图 ----
+    onSelect(row, from) {
+      if (!row) return;
+      if (from !== 'gold') this.$refs.goldTable.setCurrentRow();
+      if (from !== 'signal') this.$refs.signalTable.setCurrentRow();
+      if (from !== 'all') this.$refs.allTable.setCurrentRow();
+      this.chartStock = row;
+      this.$nextTick(() => {
+        this.loadChart(row.code);
+        const el = document.querySelector('.chart-card');
+        el && el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    },
+    clearSelection() {
+      this.$refs.goldTable && this.$refs.goldTable.setCurrentRow();
+      this.$refs.signalTable && this.$refs.signalTable.setCurrentRow();
+      this.$refs.allTable && this.$refs.allTable.setCurrentRow();
+      this.chartStock = null;
+    },
+    async loadChart(code) {
+      this.loadingChart = true;
+      try {
+        const q = this.buildQuery();
+        q.set('code', code);
+        const rows = await getJson('/kdj/series?' + q.toString());
+        if (!rows.length) {
+          ElementPlus.ElMessage.warning(code + ' 无序列数据');
+          return;
+        }
+        this.renderChart(rows);
+      } catch (e) {
+        ElementPlus.ElMessage.error('KDJ 序列加载失败：' + e.message);
+      } finally {
+        this.loadingChart = false;
+      }
+    },
+
+    // ---- 图表 ----
+    // 周期标签：日 yyyy/mm/dd；周 min~max；月 yyyy/mm；季 2025Q1
+    periodLabel(r) {
+      if (this.kdjType === '0') return fmtSlash(r.tradeDate);
+      if (this.kdjType === '1') return fmtSlash(r.tradeDateMin) + '~' + fmtSlash(r.tradeDateMax);
+      if (this.kdjType === '2') return fmtSlash(String(r.tradeDate).slice(0, 6));
+      const y = String(r.tradeDateMin).slice(0, 4);
+      const q = Math.ceil(+String(r.tradeDateMax).slice(4, 6) / 3);
+      return y + 'Q' + q;
+    },
+    renderChart(rows) {
+      const labels = rows.map(r => this.periodLabel(r));
+      const bars = rows.map(r => ({ open: +r.open, close: +r.close, low: +r.low, high: +r.high }));
+      const kdj = rows.map((r, i) => ({
+        idx: i,
+        k: +r.k, d: +r.d, j: +r.j,
+        crossType: r.crossType || null,
+        crossValue: r.crossValue === null || r.crossValue === undefined ? null : +r.crossValue
+      }));
+      this._cd = { labels, bars, kdj };
+
+      const last = kdj[kdj.length - 1];
+      // KDJ 标题：N/M1/M2 + 最新 K/D/J，各自着色（K 黄、D 紫、J 蓝）
+      const kdjTitle = '{t|KDJ(' + this.params.n + ',' + this.params.m1 + ',' + this.params.m2 + ')：}'
+        + ' {k|K:' + fmt2(last.k) + '} {d|D:' + fmt2(last.d) + '} {j|J:' + fmt2(last.j) + '}';
+
+      // 默认视野：截止周期钉在最右端；数据不足一屏则左对齐展示全部
+      const len = labels.length;
+      const start = len <= WINDOW_SIZE ? 0 : (1 - WINDOW_SIZE / len) * 100;
+
+      // 网格全部用 graphic 画成屏幕固定的「闭合实线方块」：
+      // 价格图 3 列 × 4 行、KDJ 图 3 列 × 2 行，四边闭合实线
+      // y 轴上下各留 8% 空白，极值不贴边
+      const pad = v => (v.max - v.min) * 0.08;
+      const plainYAxis = {
+        scale: true,
+        min: v => v.min - pad(v),
+        max: v => v.max + pad(v),
+        axisLabel: { show: false },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false }
+      };
+
+      if (this.chart) this.chart.dispose();
+      this.chart = echarts.init(document.getElementById('kdjChart'));
+      const cw = document.getElementById('kdjChart').clientWidth;
+      const gl = 40, gw = cw - 80;
+      // graphic 元素必须全部带唯一 id——无 id 元素按索引合并，
+      // 会导致 updateRangeMarks 里按 id 更新的动态文本对位错乱
+      const gridRects = [[30, 230, 4], [360, 160, 2]];
+      const gridLines = [];
+      let glId = 0;
+      for (const [gt, gh, rows_] of gridRects) {
+        gridLines.push({
+          id: 'gl' + glId++,
+          type: 'rect', z: 1, silent: true,
+          shape: { x: gl, y: gt, width: gw, height: gh },
+          style: { fill: 'none', stroke: '#dcdfe6', lineWidth: 1 }
+        });
+        for (let r = 1; r < rows_; r++) {
+          const y = gt + (gh * r) / rows_;
+          gridLines.push({
+            id: 'gl' + glId++,
+            type: 'line', z: 1, silent: true,
+            shape: { x1: gl, y1: y, x2: gl + gw, y2: y },
+            style: { stroke: '#f0f0f0', lineWidth: 1 }
+          });
+        }
+        for (const x of [gl + gw / 3, gl + (2 * gw) / 3]) {
+          gridLines.push({
+            id: 'gl' + glId++,
+            type: 'line', z: 1, silent: true,
+            shape: { x1: x, y1: gt, x2: x, y2: gt + gh },
+            style: { stroke: '#f0f0f0', lineWidth: 1 }
+          });
+        }
+      }
+      this.chart.setOption({
+        animation: false,
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross' },
+          formatter: ps => {
+            if (!ps || !ps.length) return '';
+            let html = '周期：' + ps[0].axisValue;
+            for (const p of ps) {
+              if (p.seriesName === 'K线') {
+                const v = p.value; // [idx, open, close, low, high]
+                html += '<br/>' + p.marker + ' 开：' + fmt2(v[1]) + ' 收：' + fmt2(v[2]) + ' 低：' + fmt2(v[3]) + ' 高：' + fmt2(v[4]);
+              } else {
+                html += '<br/>' + p.marker + ' ' + p.seriesName + '：' + fmt2(p.value);
+              }
+            }
+            return html;
+          }
+        },
+        // K/D/J 图例：与 KDJ(9,3,3) 标题同一行，靠右
+        legend: { data: ['K', 'D', 'J'], top: 328, right: 40 },
+        grid: [
+          { left: 40, right: 40, top: 30, height: 230 },
+          { left: 40, right: 40, top: 360, height: 160 }
+        ],
+        xAxis: [
+          {
+            type: 'category', gridIndex: 0, data: labels,
+            axisLabel: { show: false },
+            axisTick: { show: false },
+            axisLine: { show: false }
+          },
+          { type: 'category', gridIndex: 1, data: labels, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false } }
+        ],
+        yAxis: [
+          Object.assign({ gridIndex: 0 }, plainYAxis),
+          Object.assign({ gridIndex: 1 }, plainYAxis)
+        ],
+        dataZoom: [{
+          type: 'inside',
+          xAxisIndex: [0, 1],
+          moveOnMouseMove: true,
+          moveOnMouseWheel: false,
+          // 滚轮 = 缩放日期区间（比例尺收放）；拖动 = 平移
+          zoomOnMouseWheel: true,
+          throttle: 0,
+          start, end: 100
+        }],
+        series: [
+          {
+            name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
+            data: bars.map(b => [b.open, b.close, b.low, b.high]),
+            itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
+          },
+          { name: 'K', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_K, data: kdj.map(p => p.k) },
+          { name: 'D', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_D, data: kdj.map(p => p.d) },
+          { name: 'J', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_J, lineStyle: { opacity: 0.6 }, data: kdj.map(p => p.j) }
+        ],
+        graphic: gridLines.concat([
+          {
+            id: 'kdjTitle',
+            type: 'text', left: 40, top: 332,
+            style: {
+              text: kdjTitle,
+              rich: {
+                t: { fill: '#303133', fontWeight: 600, fontSize: 13 },
+                k: { fill: COLOR_K, fontWeight: 600, fontSize: 13 },
+                d: { fill: COLOR_D, fontWeight: 600, fontSize: 13 },
+                j: { fill: COLOR_J, fontWeight: 600, fontSize: 13 }
+              }
+            }
+          },
+          // 最高 / 最低交汇点：放在 KDJ 图最左（上 / 下），随视野动态更新
+          { id: 'crossHi', type: 'text', left: 0, top: 362, style: { text: '', fill: '#909399', fontSize: 12 } },
+          { id: 'crossLo', type: 'text', left: 0, top: 503, style: { text: '', fill: '#909399', fontSize: 12 } },
+          // 视野两端日期：放在两图中间的左 / 右两侧，随拖动更新
+          { id: 'dateL', type: 'text', left: 40, top: 298, style: { text: '', fill: '#909399', fontSize: 12 } },
+          { id: 'dateR', type: 'text', right: 40, top: 298, style: { text: '', fill: '#909399', fontSize: 12, align: 'right' } }
+        ])
+      }, true);
+
+      // 拖动时每次 datazoom 都做 setOption 会掉帧：用 rAF 合帧，每帧最多重算一次标注
+      this.chart.on('datazoom', () => {
+        if (this._raf) return;
+        this._raf = requestAnimationFrame(() => {
+          this._raf = null;
+          this.updateRangeMarks();
+        });
+      });
+      this.updateRangeMarks();
+    },
+    // 可见范围动态标注：价格最高/最低（点+短横线样式）、KDJ 最高/最低交汇（左侧文字）
+    updateRangeMarks() {
+      if (!this.chart || !this._cd) return;
+      const { labels, bars, kdj } = this._cd;
+      const len = bars.length;
+      const dz = this.chart.getOption().dataZoom[0];
+      // 可见下标：startValue 可能是数字下标、字符串类目值或空，统一转成下标
+      const toIdx = (v, pct, isEnd) => {
+        if (typeof v === 'number' && isFinite(v)) return v;
+        if (typeof v === 'string') {
+          const i = labels.indexOf(v);
+          if (i >= 0) return i;
+        }
+        return isEnd ? Math.ceil(len * pct / 100) - 1 : Math.floor(len * pct / 100);
+      };
+      let si = toIdx(dz.startValue, dz.start, false);
+      let ei = toIdx(dz.endValue, dz.end, true);
+      si = Math.max(0, Math.min(len - 1, Math.round(si)));
+      ei = Math.max(0, Math.min(len - 1, Math.round(ei)));
+      if (ei < si) ei = si;
+
+      let hi = -Infinity, lo = Infinity, hiIdx = si, loIdx = si;
+      for (let i = si; i <= ei; i++) {
+        if (bars[i].high > hi) { hi = bars[i].high; hiIdx = i; }
+        if (bars[i].low < lo)  { lo = bars[i].low;  loIdx = i; }
+      }
+      let cHi = null, cLo = null;
+      for (let i = si; i <= ei; i++) {
+        const p = kdj[i];
+        if (!p.crossType) continue;
+        if (!cHi || p.crossValue > cHi.crossValue) cHi = p;
+        if (!cLo || p.crossValue < cLo.crossValue) cLo = p;
+      }
+
+      // 价格极值：极值点小圆点 + 一截短横线 + 线端数值
+      // 线段端点夹在可见窗口内，避免极值在视野边缘时整段被裁剪
+      const seg = 4;
+      const extremeLine = {
+        silent: true,
+        symbol: ['circle', 'none'],
+        symbolSize: 5,
+        lineStyle: { color: '#909399', width: 1 },
+        emphasis: { disabled: true }
+      };
+      const priceLines = [
+        [
+          { coord: [hiIdx, hi] },
+          { coord: [Math.min(hiIdx + seg, ei), hi],
+            label: { show: true, formatter: fmt2(hi), position: 'end', color: '#303133', fontWeight: 600, distance: 4 } }
+        ],
+        [
+          { coord: [loIdx, lo] },
+          { coord: [Math.max(loIdx - seg, si), lo],
+            label: { show: true, formatter: fmt2(lo), position: 'start', color: '#303133', fontWeight: 600, distance: 4 } }
+        ]
+      ];
+
+      // KDJ：金叉 / 死叉锚形小图标（金叉金色、死叉灰色），不带数字，统一放在线条下方
+      const kdjMarks = kdj.filter(p => p.crossType).map(p => ({
+        coord: [p.idx, p.k],
+        symbol: ANCHOR_PATH,
+        symbolSize: 14,
+        symbolOffset: [0, 12],
+        itemStyle: {
+          color: 'rgba(0,0,0,0)',
+          borderColor: p.crossType === 'gold' ? COLOR_ANCHOR_GOLD : COLOR_ANCHOR_GRAY,
+          borderWidth: 1.5
+        },
+        label: { show: false }
+      }));
+
+      this.chart.setOption({
+        series: [
+          { name: 'K线', markLine: Object.assign({ data: priceLines }, extremeLine), markPoint: { data: [] } },
+          { name: 'K', markPoint: { data: kdjMarks } }
+        ],
+        graphic: [
+          { id: 'crossHi', style: { text: cHi ? fmt2(cHi.crossValue) : '' } },
+          { id: 'crossLo', style: { text: cLo ? fmt2(cLo.crossValue) : '' } },
+          { id: 'dateL', style: { text: labels[si] } },
+          { id: 'dateR', style: { text: labels[ei] } }
+        ]
+      });
+    }
+  }
+}).use(ElementPlus, { locale: ElementPlusLocaleZhCn }).mount('#app');

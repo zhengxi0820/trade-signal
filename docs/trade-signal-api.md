@@ -4,7 +4,8 @@
 
 ## 通用说明
 
-- 所有接口均为 GET，参数以 query string 传递。
+- **认证**：`/kdj/**` 全部需要认证 Cookie，未认证返回 401。先调 `POST /auth/login`（body `{"key":"访问密钥"}`）换 HttpOnly Cookie（SameSite=Strict，默认 7 天）；`GET /auth/check` 查状态（204/401）；`POST /auth/logout` 登出。同一 IP 连续失败 5 次锁定 15 分钟（429）。密钥由服务端环境变量 `TRADE_SIGNAL_ACCESS_KEY` 配置。
+- 业务接口均为 GET，参数以 query string 传递。
 - 所有数值入参/出参均为 BigDecimal（JSON 中为数字）。
 - 开关类参数为字符串："1" = 启用，"0" = 禁用。
 - 日期字段规则（入参与出参一致）：

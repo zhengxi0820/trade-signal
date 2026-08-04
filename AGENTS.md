@@ -40,9 +40,10 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 
 ## 安全
 
-- 凭据只走环境变量（Java 侧 `TRADE_SIGNAL_DB_USER/PASSWORD`，scripts 侧 `DB_*` 且 `DB_PASSWORD` 无代码默认值），明文不进仓；yaml 里的缺省值仅是本机 dev 库。
+- 凭据只走环境变量（Java 侧 `TRADE_SIGNAL_DB_USER/PASSWORD`、`TRADE_SIGNAL_ACCESS_KEY`，scripts 侧 `DB_*` 且 `DB_PASSWORD` 无代码默认值），明文不进仓；yaml 里的缺省值仅是本机 dev 库。
+- **认证在 `auth/` 包**：密钥登录换 HMAC 签名 Cookie（无服务端会话），`/kdj/**` 由 AuthFilter 拦截 401，同 IP 失败 5 次锁 15 分钟。`TRADE_SIGNAL_ACCESS_KEY` 未配置时启动生成随机密钥打日志（本机开发模式），生产必须显式设置。
 - 入参白名单校验在 `KDJServiceImpl.validateParam`，新增枚举/开关参数要同步加。
-- **上公网前必办**（详见 `docs/SECURITY.md` 3.1 检查单）：接口加认证与限流、HTTPS+安全头（注意 `static/index.html` 是内联脚本+CDN 形态，严格 CSP 会白屏，需先改造再下发）、生产错误收口、凭据全部换新。
+- **上公网事项已落实**（2026-08-04，详见 `docs/trade-signal-deployment.md` 与 `docs/SECURITY.md` 3.1）：HTTPS+安全头+CSP（前端已拆外置 css/js + vendor 本地化；CSP 含 `unsafe-eval`/`unsafe-inline` 两个刻意取舍，预编译模板后可去掉）、生产凭据全部独立随机值。
 
 ## 测试约定
 
@@ -57,5 +58,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 | `docs/trade-signal-api.md` | 接口参数/出参/示例的唯一权威来源 |
 | `docs/trade-signal-schema.sql` | 数据库表结构（stock_quote / work_day / stock_info / stock_dividend），与 orm/entity 一一对应 |
 | `docs/trade-signal-data-pipeline.md` | 数据管线权威口径（数据源实测、因子反推法、风险与验证记录）；命令用法在 `scripts/README.md` |
+| `docs/trade-signal-deployment.md` | 线上部署与运维手册（服务器布局、发版、备份恢复、安全口径） |
+| `docs/SECURITY.md` | 服务器与服务安全基线（上线前检查单在 3.1） |
 
 改业务规则先改需求文档，改参数先改接口文档，改表结构先改 schema.sql，代码跟随文档。

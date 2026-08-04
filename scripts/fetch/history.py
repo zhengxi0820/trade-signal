@@ -153,19 +153,33 @@ def upsert_quote_rows(conn, code: str, rows: list, adjust: str) -> int:
     return len(params)
 
 
-def run_history(code: str, years: int = 3, conn=None, interval: float = 2.5) -> dict:
-    """单股历史回填主流程，返回试点报告 dict（事件清单 / 平台波动 / 对拍偏差）。"""
+def run_history(code: str, years: int = 3, conn=None, interval: float = 2.5,
+                announce: bool = True) -> dict:
+    """单股历史回填主流程，返回试点报告 dict（事件清单 / 平台波动 / 对拍偏差）。
+
+    announce=True 时先抓东财公告除权日历走双轨（公告=权威日历，反推=测 k+校验）；
+    东财不可用（如本机被墙）自动回退纯反推（SOURCE='derive'）。
+    """
     end = date.today()
     start = end - timedelta(days=years * 365)
 
     raw_rows, qfq_rows, source = fetch_pair(code, start, end, interval)
+
+    announce_rows = None
+    if announce:
+        try:
+            from fetch.dividend import fetch_dividend_calendar_retry
+            announce_rows = fetch_dividend_calendar_retry(code, interval)
+        except Exception as e:
+            print(f"  [dividend] {code} 公告日历不可用，回退纯反推: {str(e)[:80]}")
 
     own_conn = conn is None
     if own_conn:
         conn = get_conn()
     try:
         upsert_quote_rows(conn, code, raw_rows, "0")
-        report = backfill_stock(conn, code, raw_rows, qfq_rows, upsert_quote_rows)
+        report = backfill_stock(conn, code, raw_rows, qfq_rows, upsert_quote_rows,
+                                announce_rows=announce_rows)
         report["source"] = source
     finally:
         if own_conn:
@@ -180,10 +194,15 @@ def main() -> int:
     args = parser.parse_args()
 
     report = run_history(args.code, args.years)
-    print(f"[history] {args.code} 完成({report['source']}): raw={report['raw_rows']} qfq={report['qfq_rows']} "
-          f"事件={len(report['events'])} 对拍最大偏差={report['max_dev']:.6f}")
+    dev = f"{report['max_dev']:.6f}" if report["max_dev"] is not None else "N/A(中止)"
+    print(f"[history] {args.code} 完成({report['source']},{report['mode']}): raw={report['raw_rows']} qfq={report['qfq_rows']} "
+          f"事件={len(report['events'])} 对拍最大偏差={dev}")
     for e in report["events"]:
-        print(f"  事件 {e.ex_date} k={e.k:.8f}")
+        print(f"  事件 {e.ex_date} k={e.k:.8f} source={e.source}")
+    if report["suspect"]:
+        print(f"  suspect(丢弃的反推事件) {len(report['suspect'])} 个")
+    if report["review"]:
+        print(f"  review(人工复核) {len(report['review'])} 个")
     return 0
 
 

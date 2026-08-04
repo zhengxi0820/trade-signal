@@ -36,11 +36,16 @@ def main() -> int:
         try:
             r = run_history(code, args.years)
             reports.append(r)
-            print(f"[pilot] {code}: raw={r['raw_rows']} qfq={r['qfq_rows']} 对齐={r['aligned_days']} "
+            dev = f"{r['max_dev']:.6f}" if r["max_dev"] is not None else "N/A"
+            print(f"[pilot] {code}({r['mode']}): raw={r['raw_rows']} qfq={r['qfq_rows']} 对齐={r['aligned_days']} "
                   f"平台段={r['segments']} 平台波动={r['plateau_fluct']:.6f} "
-                  f"对拍最大偏差={r['max_dev']:.6f}({r['worst_date']}) {'OK' if r['verify_ok'] else '超差!'}")
+                  f"对拍最大偏差={dev}({r['worst_date']}) {'OK' if r['verify_ok'] else '超差/中止!'}")
             for e in r["events"]:
-                print(f"  事件 {e.ex_date}  k={e.k:.8f}  当日相对变化={e.rel_change:+.4%}")
+                print(f"  事件 {e.ex_date}  k={e.k:.8f}  source={e.source}  当日相对变化={e.rel_change:+.4%}")
+            if r["suspect"]:
+                print(f"  suspect {len(r['suspect'])} 个: {[s['ex_date'] for s in r['suspect']][:10]}")
+            if r["review"]:
+                print(f"  review {len(r['review'])} 个")
         except Exception as e:
             failed.append(code)
             print(f"[pilot] {code} 失败: {type(e).__name__}: {e}")
@@ -49,7 +54,8 @@ def main() -> int:
     print(f"{'代码':<8}{'平台波动':>10}{'对拍偏差':>10}  事件(EX_DATE:k)")
     for r in reports:
         evs = "  ".join(f"{e.ex_date}:{e.k:.6f}" for e in r["events"]) or "-"
-        print(f"{r['code']:<8}{r['plateau_fluct']:>10.6f}{r['max_dev']:>10.6f}  {evs}")
+        dev = f"{r['max_dev']:10.6f}" if r["max_dev"] is not None else "      N/A "
+        print(f"{r['code']:<8}{r['plateau_fluct']:>10.6f}{dev}  {evs}")
     if failed:
         print(f"[pilot] 失败清单: {failed}")
     return 0 if not failed else 2

@@ -32,11 +32,14 @@ IMPLIED_AMOUNT_THRESHOLD = 0.005
 K_WINDOW = 10
 
 # ---- 伪事件过滤（低价股舍入噪声对策，2026-08 601880 实测后新增）----
-# ① 噪声自适应幅度下限：候选跳变幅度必须超过 QUANTUM_NOISE_FACTOR × PRICE_TICK ÷ 股价。
+# ① 噪声自适应幅度下限：候选跳变幅度必须超过 QUANTUM_NOISE_FACTOR × PRICE_TICK ÷ min(raw, qfq)。
 #    依据：factor 由两个各自 0.01 元舍入的价格相除得到，常数平台上逐日 factor 的
-#    舍入状态游走最大可达 ~1 个价位/股价（相对值）；601880 实测伪事件全部 ≤1.05 个
+#    舍入状态游走最大可达 ~1 个价位/较小价（相对值）；601880 实测伪事件全部 ≤1.05 个
 #    价位（rel≤0.72%@1.3~1.8 元），真事件全部 ≥2.2 个价位（rel≥1.32%），1.5 个
 #    价位在两者之间干净分离。对高价股该项趋近于零（茅台仅 0.0009%），无影响。
+#    **分母必须取 min(raw, qfq)**（2026-08-04 全量回填事故修复）：等比前复权下早期
+#    qfq 被累计因子压缩至分角级（万科 1991 年 qfq 仅 0.04~0.13 元），噪声由较小的
+#    qfq 价主导；按 raw 价计算的下限在早期形同虚设，曾致每股上千个伪事件。
 # ② 方向过滤（无参数）：等比前复权下除权日 factor 只会向 1 跳升（k=前÷后<1），
 #    降向候选（k≥1）物理上不可能是除权，直接丢弃。
 # ③ 跳变持续性后验：候选跳变点之后 PERSIST_WINDOW 个交易日的 factor 中位数，
@@ -49,14 +52,28 @@ QUANTUM_NOISE_FACTOR = 1.5
 PERSIST_WINDOW = 5
 PERSIST_RATIO = 0.5
 
-# 自算 qfq 与爬取 qfq 对拍的最大允许相对偏差
+# 自算 qfq 与爬取 qfq 对拍的逐日容差：max(VERIFY_TOLERANCE, ADAPTIVE_VERIFY_TICKS 个价位 ÷ qfq价)。
+# 早期 qfq 低价段的"偏差"本质是爬取 qfq 自身的两位小数舍入抖动（自算值是段中位数
+# 去噪后的平滑序列，反而更接近真值），绝对容差在该段无意义，故按价位数自适应。
 VERIFY_TOLERANCE = 0.001
+ADAPTIVE_VERIFY_TICKS = 3.0
 
 # factor 阶梯平台段内部允许的最大相对波动（平台稳定性验收线）
 PLATEAU_TOLERANCE = 0.001
 
-# 除权事件来源标识（stock_dividend.SOURCE）
-SOURCE_DERIVE = "derive"
+# 除权事件来源标识（stock_dividend.SOURCE，与 schema.sql 注释一致）
+SOURCE_DERIVE = "derive"                    # 纯因子反推（东财公告不可用时的兜底）
+SOURCE_ANNOUNCE = "announce"                # 公告日历命中但无反推事件，理论公式算 k
+SOURCE_DERIVE_ANNOUNCE = "derive+announce"  # 公告日历 + 反推 k 双轨命中（主口径）
+
+# ---- 双轨合并（公告日历 = 权威事件日历；因子反推 = k 值测量 + 校验 + 兜底）----
+# 公告除权日 ±ANNOUNCE_MATCH_DAYS 个交易日内的反推事件视为同一事件
+ANNOUNCE_MATCH_DAYS = 3
+# 交叉校验：|k_理论/k_反推 - 1| 超过 K_CROSSCHECK_TOL 进人工复核清单（仍用反推 k 落库）
+K_CROSSCHECK_TOL = 0.005
+# 全量回填保险：单股事件数 > 市龄(年) × MAX_EVENTS_PER_YEAR → 中止该股、标记人工复核
+# （000002 事故量级是每年 50~76 个伪事件；真实分红+送转每年至多 2~3 次）
+MAX_EVENTS_PER_YEAR = 3
 
 
 def board_type_of(code: str) -> str:

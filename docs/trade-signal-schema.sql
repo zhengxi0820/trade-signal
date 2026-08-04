@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS stock_dividend (
     CODE        VARCHAR(16)    NOT NULL COMMENT '股票代码',
     EX_DATE     VARCHAR(8)     NOT NULL COMMENT '除权除息日(yyyymmdd)',
     FACTOR      DECIMAL(20,12) NOT NULL COMMENT '综合复权因子k',
-    SOURCE      VARCHAR(32)    NOT NULL COMMENT '来源：derive=价格比反推',
+    SOURCE      VARCHAR(32)    NOT NULL COMMENT '来源：derive+announce=公告日历+反推k(主口径) announce=公告日历+理论k derive=纯反推(公告不可用兜底)',
     CREATED_AT  DECIMAL(15,0)  DEFAULT NULL COMMENT '创建时间(UNIX秒)',
     UPDATED_AT  DECIMAL(15,0)  DEFAULT NULL COMMENT '更新时间(UNIX秒)',
     PRIMARY KEY (ID),

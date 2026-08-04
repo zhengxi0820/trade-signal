@@ -6,10 +6,10 @@
 - 事件判定五道闸（前四道记录丢弃现场）：
   ① 相对阈值：factor 日际相对变化 > 0.1%（原始双阈值之一，静默）
   ② 金额阈值：相对变化 × 当日股价 > 0.005 元（原始双阈值之二，静默）
-  ③ 噪声自适应幅度下限：|相对变化| > 1.5 × 0.01 元 ÷ 股价——factor 由两个各自
-     0.01 元舍入的价格相除得到，常数平台上的舍入状态游走可达 ~1 个价位/股价；
-     601880 实测伪事件 ≤1.05 个价位、真事件 ≥2.2 个价位，1.5 个价位干净分离。
-     高价股该项趋近于零，无影响（记录 'amplitude'）
+  ③ 噪声自适应幅度下限：|相对变化| > 1.5 × 0.01 元 ÷ min(raw, qfq)——factor 由两个各自
+     0.01 元舍入的价格相除得到，常数平台上的舍入状态游走可达 ~1 个价位/较小价；
+     分母取 min(raw, qfq)：早期 qfq 被压缩至分角级时噪声由 qfq 侧主导
+     （601880 实测伪事件 ≤1.05 个价位、真事件 ≥2.2 个价位；000002 早期段事故后修正）。
   ④ 方向过滤：只有升向跳变（factor 向 1 靠）才可能是除权（记录 'direction'）
   ⑤ 持续性后验：跳变后 5 日 factor 中位数须保持在新平台半程以上（记录 'persistence'）
   （③④⑤ 是 601880 实测后新增：低价股 qfq/raw 双序列 0.01 元异步舍入可产生
@@ -32,6 +32,7 @@ from common.const import (
     PERSIST_RATIO,
     PRICE_TICK,
     QUANTUM_NOISE_FACTOR,
+    SOURCE_DERIVE,
 )
 
 
@@ -41,6 +42,7 @@ class DividendEvent:
     ex_date: str      # 跳变发生的交易日（yyyymmdd），即除权日
     k: float          # 综合复权因子 = 跳变后平台 / 跳变前平台
     rel_change: float # 当日 factor 相对变化（带符号，除权为负）
+    source: str = SOURCE_DERIVE  # derive / announce / derive+announce（双轨合并时改写）
 
 
 @dataclass
@@ -93,9 +95,11 @@ def detect_events(fs: FactorSeries) -> list:
             continue
         if abs(rel) * fs.closes[i] <= IMPLIED_AMOUNT_THRESHOLD:
             continue
-        # 闸③噪声自适应幅度下限：factor 的舍入状态游走最大 ~1 个价位/股价，
-        # 跳变幅度必须超过 QUANTUM_NOISE_FACTOR 个价位才可能是真事件
-        if abs(rel) <= QUANTUM_NOISE_FACTOR * PRICE_TICK / fs.closes[i]:
+        # 闸③噪声自适应幅度下限：factor 的舍入状态游走最大 ~1 个价位/较小价。
+        # 分母取 min(raw, qfq)——等比前复权下早期 qfq 被压缩至分角级，
+        # 噪声由 qfq 侧主导，按 raw 价计算的下限在早期形同虚设（000002 事故根因）
+        qfq_close_i = fs.factors[i] * fs.closes[i]
+        if abs(rel) <= QUANTUM_NOISE_FACTOR * PRICE_TICK / min(fs.closes[i], qfq_close_i):
             rejected.append(RejectedCandidate(fs.dates[i], "amplitude", rel))
             continue
         # 闸④方向过滤：等比前复权下除权日 factor 只会向 1 跳升（k=前/后<1），

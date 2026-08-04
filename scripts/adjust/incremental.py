@@ -79,8 +79,9 @@ def apply_daily(conn, code: str, raw_today: dict, qfq_today: dict, upsert_quote_
     event = None
     if factor_prev is not None:
         rel = factor_today / factor_prev - 1.0
-        # 闸①相对阈值 + 闸②金额阈值 + 闸③噪声自适应幅度下限（与历史回填同口径）
-        rel_floor = QUANTUM_NOISE_FACTOR * PRICE_TICK / raw_today["close"]
+        # 闸①相对阈值 + 闸②金额阈值 + 闸③噪声自适应幅度下限（与历史回填同口径，
+        # 分母取 min(raw, qfq)：早期 qfq 低价段噪声由 qfq 侧主导）
+        rel_floor = QUANTUM_NOISE_FACTOR * PRICE_TICK / min(raw_today["close"], qfq_today["close"])
         if (abs(rel) > FACTOR_REL_THRESHOLD
                 and abs(rel) * raw_today["close"] > IMPLIED_AMOUNT_THRESHOLD
                 and abs(rel) > rel_floor):

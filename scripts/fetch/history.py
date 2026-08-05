@@ -102,12 +102,17 @@ def fetch_hist_em(code: str, adjust: str, start: date, end: date) -> list:
 
 
 SOURCES = [("sina", fetch_hist_sina), ("eastmoney", fetch_hist_em)]
+SOURCES_EM_FIRST = [("eastmoney", fetch_hist_em), ("sina", fetch_hist_sina)]
 
 
-def fetch_pair(code: str, start: date, end: date, interval: float = 2.5) -> tuple:
-    """抓 none+qfq 两个口径（必须同源），带源切换与指数退避。返回 (raw_rows, qfq_rows, source)。"""
+def fetch_pair(code: str, start: date, end: date, interval: float = 2.5, sources: list = None) -> tuple:
+    """抓 none+qfq 两个口径（必须同源），带源切换与指数退避。返回 (raw_rows, qfq_rows, source)。
+
+    sources 默认新浪优先（全历史回填：东财本机被墙且新浪单次返回全历史）；
+    每日增量传 SOURCES_EM_FIRST（东财支持日期区间、窗口 payload 小，~3-6s/股）。
+    """
     last_err = None
-    for source_name, fetch_fn in SOURCES:
+    for source_name, fetch_fn in (sources or SOURCES):
         for attempt in range(RETRY):
             try:
                 raw_rows = fetch_fn(code, "", start, end)

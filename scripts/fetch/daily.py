@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""daily.py — 每日增量抓取（实现，试点阶段不重点验证）
+"""daily.py — 每日增量抓取（生产口径，2026-08-05 起）
 
 流程：对股票清单逐只爬近几日 none+qfq → 取库中尚无的交易日 → adjust.incremental 逐日应用。
 串行真限流 sleep + 指数退避重试，与 fetch.history 同款。
 
+源策略（与回填不同的关键点）：
+- **东财优先**（SOURCES_EM_FIRST）：stock_zh_a_hist 支持 start/end 日期区间，10 天窗口
+  payload 极小，每股 ~3-6s；新浪 stock_zh_a_daily 无视日期参数每次返回全历史（~15-20s/股），
+  只做兜底。none/qfq 必须同源（复权基期一致），源切换以"股"为单位整体切换。
+- 东财 qfq 与新浪同为等比前复权（锚定最新价），增量只看最近 factor（≈1 附近），
+  与回填期的新浪基线兼容；东财成交量为手已 ×100 转股，与新浪口径一致。
+- 限流 sleep 降到 1s（窗口小、请求轻），指数退避重试保留。
+
 用法（在 scripts/ 目录下）：
     python -m fetch.daily --codes 600519 600030
-    python -m fetch.daily --all        # stock_info 全量（慎用，5400 只 × 2 口径）
+    python -m fetch.daily --all        # stock_info 全量（5535 只，预计 4~8h，cron 日跑）
 """
 
 import argparse
@@ -18,9 +26,10 @@ os.environ["NO_PROXY"] = "*"
 
 from adjust.incremental import apply_daily
 from common.db import get_conn
-from fetch.history import fetch_pair, upsert_quote_rows
+from fetch.history import fetch_pair, upsert_quote_rows, SOURCES_EM_FIRST
 
 LOOKBACK_DAYS = 10  # 每次回看窗口，覆盖周末/节假日/漏跑
+INTERVAL = 1.0      # 窗口请求轻，限流降到 1s（回填仍 2.5s）
 
 
 def known_dates(conn, code: str, adjust: str, since: date) -> set:
@@ -32,10 +41,11 @@ def known_dates(conn, code: str, adjust: str, since: date) -> set:
         return {r[0] for r in cur.fetchall()}
 
 
-def run_daily_one(conn, code: str, interval: float = 2.5) -> dict:
+def run_daily_one(conn, code: str, interval: float = INTERVAL) -> dict:
     end = date.today()
     start = end - timedelta(days=LOOKBACK_DAYS)
-    raw_rows, qfq_rows, source = fetch_pair(code, start, end, interval)
+    raw_rows, qfq_rows, source = fetch_pair(code, start, end, interval,
+                                            sources=SOURCES_EM_FIRST)
     qfq_by_date = {r["trade_date"]: r for r in qfq_rows}
     done = known_dates(conn, code, "0", start)
 
@@ -61,7 +71,7 @@ def run_daily_one(conn, code: str, interval: float = 2.5) -> dict:
         applied += 1
         if res["event"]:
             events.append((d, res["k"]))
-    return {"applied": applied, "deferred": deferred, "events": events}
+    return {"applied": applied, "deferred": deferred, "events": events, "source": source}
 
 
 def main() -> int:
@@ -90,7 +100,7 @@ def main() -> int:
                 tag = f" 事件={res['events']}" if res["events"] else ""
                 if res.get("deferred"):
                     tag += f" 延期={res['deferred']}"
-                print(f"[daily] {i}/{len(codes)} {code} +{res['applied']} 行{tag}")
+                print(f"[daily] {i}/{len(codes)} {code} +{res['applied']} 行({res['source']}){tag}", flush=True)
             except Exception as e:
                 failed.append(code)
                 print(f"[daily] {i}/{len(codes)} {code} 失败: {e}")

@@ -51,5 +51,9 @@ zcat /var/backups/trade-signal/trade_signal-<日期>.sql.gz | sudo mysql trade_s
 ## 待办
 
 - [ ] 干净基线快照（腾讯云控制台手动打，部署验证完成后）
-- [ ] 每日增量数据拉取（scripts 管线上服务器或本机定时跑，待配）
-- [ ] 全量 5400 只股票历史回填
+- [ ] 全市场扫描接口（gold-cross/trade-signal/all-stocks）窗口优化：全量数据后全历史实时计算超时（120s+），需限制扫描窗口
+
+## 已完成里程碑
+
+- 2026-08-05 全量历史回填完成（5534 只，5499 成功 0 失败，33.4M 行，双轨事件 56634 个；689009 CDR 剔除）；work_day 全市场重建
+- 2026-08-05 每日增量 cron 上线：`/etc/cron.d/trade-signal-daily`，工作日 19:17 跑 `fetch.daily --all`（东财窗口源，预计 4~8h），日志 `/home/ops/scripts/daily.log`

@@ -5,6 +5,7 @@
 --   work_day       ↔ src/main/java/com/xi/orm/entity/WorkDayDO.java
 --   stock_info     ↔ src/main/java/com/xi/orm/entity/StockInfoDO.java
 --   stock_dividend ↔ scripts/adjust（因子反推生成，无对应 Java 实体）
+--   app_user       ↔ src/main/java/com/xi/orm/entity/AppUserDO.java
 -- 字段要改动时：先改本文件与 DO，再对库执行 ALTER，三者保持一致。
 --
 -- 约定：
@@ -77,3 +78,18 @@ CREATE TABLE IF NOT EXISTS stock_dividend (
     PRIMARY KEY (ID),
     UNIQUE KEY uk_code_exdate (CODE, EX_DATE)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='除权除息事件';
+
+-- 注册用户（邀请码注册制，邀请码由环境变量 TRADE_SIGNAL_INVITE_CODES 配置，不落库）
+-- PASSWORD 存 BCrypt 哈希（60 字符），永不存明文；STATUS 是恶意账号禁用开关（非权限体系）
+-- 唯一索引在 utf8mb4_general_ci 下大小写不敏感：Admin/admin 视为重复（防仿冒）
+CREATE TABLE IF NOT EXISTS app_user (
+    ID          BIGINT       NOT NULL AUTO_INCREMENT,
+    USERNAME    VARCHAR(32)  NOT NULL COMMENT '登录名（^[a-zA-Z0-9_]{3,20}$）',
+    PASSWORD    VARCHAR(60)  NOT NULL COMMENT '密码 BCrypt 哈希',
+    STATUS      CHAR(1)      NOT NULL DEFAULT '1' COMMENT '状态：1=正常 0=禁用',
+    INVITE_CODE VARCHAR(64)  DEFAULT NULL COMMENT '注册时使用的邀请码（滥用追溯）',
+    CREATED_AT  DECIMAL(15,0) DEFAULT NULL COMMENT '创建时间(UNIX秒)',
+    UPDATED_AT  DECIMAL(15,0) DEFAULT NULL COMMENT '更新时间(UNIX秒)',
+    PRIMARY KEY (ID),
+    UNIQUE KEY uk_username (USERNAME)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='注册用户';

@@ -46,9 +46,15 @@ createApp({
     return {
       // 认证状态：默认未认证（遮罩盖住整页），/auth/check 通过后才进入
       authed: false,
+      authView: 'login',      // login | register（默认登录页，「立即注册」切注册页）
+      useKey: false,          // 登录页内切访问密钥入口（服务器脚本同款）
       authKey: '',
-      authError: '',
+      // 登录与注册表单状态完全独立，互不串
+      loginForm: { username: '', password: '' },
+      registerForm: { username: '', password: '', inviteCode: '' },
       authLoading: false,
+      // 提示条：3 秒自动消失
+      toast: { text: '', type: 'error' },
 
       kdjType: '0',
 
@@ -179,33 +185,90 @@ createApp({
     },
 
     // ---- 认证 ----
+    showToast(text, type) {
+      this.toast = { text, type: type || 'error' };
+      clearTimeout(this._toastTimer);
+      this._toastTimer = setTimeout(() => { this.toast.text = ''; }, 3000);
+    },
     async login() {
-      if (!this.authKey) {
-        this.authError = '请输入访问密钥';
+      const body = this.useKey
+        ? { key: this.authKey }
+        : { username: this.loginForm.username, password: this.loginForm.password };
+      if (this.useKey && !this.authKey) {
+        this.showToast('请输入访问密钥');
+        return;
+      }
+      if (!this.useKey && (!this.loginForm.username || !this.loginForm.password)) {
+        this.showToast('请输入用户名和密码');
         return;
       }
       this.authLoading = true;
-      this.authError = '';
       try {
         const resp = await fetch('/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: this.authKey })
+          body: JSON.stringify(body)
         });
         if (resp.ok) {
-          this.authed = true;
-          this.authKey = '';
-          this.initPeriods();
+          this.onAuthed();
         } else if (resp.status === 429) {
-          this.authError = '尝试次数过多，已锁定 15 分钟';
+          this.showToast('尝试次数过多，已锁定 15 分钟');
         } else {
-          this.authError = '密钥错误';
+          // 401 带剩余尝试次数
+          this.showToast(await this.readErrorDetail(resp, this.useKey ? '密钥错误' : '用户名或密码错误'));
         }
       } catch (e) {
-        this.authError = '网络异常，请重试';
+        this.showToast('网络异常，请重试');
       } finally {
         this.authLoading = false;
       }
+    },
+    async register() {
+      const f = this.registerForm;
+      if (!f.username || !f.password || !f.inviteCode) {
+        this.showToast('请填写用户名、密码和邀请码');
+        return;
+      }
+      this.authLoading = true;
+      try {
+        const resp = await fetch('/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: f.username, password: f.password, inviteCode: f.inviteCode })
+        });
+        if (resp.ok) {
+          // 注册成功：清空注册表单，跳回登录页
+          this.registerForm = { username: '', password: '', inviteCode: '' };
+          this.authView = 'login';
+          this.showToast('注册成功，请登录', 'success');
+        } else if (resp.status === 429) {
+          this.showToast('尝试次数过多，已锁定 15 分钟');
+        } else if (resp.status === 403) {
+          this.showToast('注册未开放');
+        } else {
+          this.showToast(await this.readErrorDetail(resp, '注册失败'));
+        }
+      } catch (e) {
+        this.showToast('网络异常，请重试');
+      } finally {
+        this.authLoading = false;
+      }
+    },
+    async readErrorDetail(resp, fallback) {
+      // 错误体为 {"message":"具体原因"}（如"用户名已存在，还可尝试 N 次"）
+      try {
+        const data = await resp.json();
+        return data.message || data.detail || fallback;
+      } catch (e) {
+        return fallback;
+      }
+    },
+    onAuthed() {
+      this.authed = true;
+      this.authKey = '';
+      this.loginForm = { username: '', password: '' };
+      this.registerForm = { username: '', password: '', inviteCode: '' };
+      this.initPeriods();
     },
 
     // ---- 周期选择器 ----

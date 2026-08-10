@@ -4,7 +4,10 @@
 
 ## 通用说明
 
-- **认证**：`/kdj/**` 全部需要认证 Cookie，未认证返回 401。先调 `POST /auth/login`（body `{"key":"访问密钥"}`）换 HttpOnly Cookie（SameSite=Strict，默认 7 天）；`GET /auth/check` 查状态（204/401）；`POST /auth/logout` 登出。同一 IP 连续失败 5 次锁定 15 分钟（429）。密钥由服务端环境变量 `TRADE_SIGNAL_ACCESS_KEY` 配置。
+- **认证**：`/kdj/**` 全部需要认证 Cookie，未认证返回 401。Cookie 为无状态 HMAC token（`subject.expiry.签名`，subject=用户名或 "key"），HttpOnly + SameSite=Strict，默认 7 天。`GET /auth/check` 查状态（204/401）；`POST /auth/logout` 登出。同一 IP 连续失败 5 次锁定 15 分钟（429）。
+  - **用户登录**：`POST /auth/login` body `{"username":"...","password":"..."}` → 204 + Cookie；401=用户名或密码错误（含账号被禁用）
+  - **密钥登录**（服务器脚本用）：`POST /auth/login` body `{"key":"访问密钥"}`，密钥由 `TRADE_SIGNAL_ACCESS_KEY` 配置
+  - **注册**：`POST /auth/register` body `{"username":"...","password":"...","inviteCode":"..."}` → 204 + Cookie（自动登录）；400 带 `{"message":"具体原因"}`（邀请码无效/用户名已存在/参数非法）；403=注册未开放（未配置邀请码）；429=限流（同 IP 失败 5 次锁 15 分钟，或同 IP 当日成功注册超 5 个）。用户名规则 `^[a-zA-Z0-9_]{3,20}$`，密码 8-64 位，用户名大小写不敏感唯一；密码只存 BCrypt 哈希。邀请码由 `TRADE_SIGNAL_INVITE_CODES` 配置（逗号分隔多个，泄露可轮换）
 - 业务接口均为 GET，参数以 query string 传递。
 - 所有数值入参/出参均为 BigDecimal（JSON 中为数字）。
 - 开关类参数为字符串："1" = 启用，"0" = 禁用。
@@ -28,6 +31,7 @@
 | `GET /kdj/trade-signal` | 某周期截止周期出现交易位（买入信号）的股票列表 |
 | `GET /kdj/all-stocks` | 全部股票的截止周期行情与 KDJ（不过滤），供「所有股票」列表 |
 | `GET /kdj/periods` | 可选周期列表（已完结周期），供截止周期选择器 |
+| `POST /kdj/cache/refresh` | 清空全市场扫描结果缓存（运维兜底；日常失效靠数据水位自动完成） |
 
 ## 入参（KDJParam，series / gold-cross / trade-signal / all-stocks 四个接口共用）
 
@@ -143,7 +147,13 @@ GET /kdj/periods?kdjType=1&market=SH
 | "2" | 该月最后一个交易日 yyyymmdd | — |
 | "3" | — | 季度首月 / 末月 yyyymm |
 
+## POST /kdj/cache/refresh
+
+清空三个全市场扫描接口（gold-cross / trade-signal / all-stocks）的结果缓存，返回 `{"cleared": N}`。
+
+运维兜底用，日常不需要调：缓存按「接口 + 全部生效参数」为 key，并以 `stock_quote` 的 `max(trade_date)` 为数据水位——新行情入库后水位变化，缓存自动整表失效，下一请求重算。
+
 ## 备注
 
-- 全市场扫描（code 为空）为实时计算，无缓存；股票数量大时响应耗时随之增长。
+- 全市场扫描（code 为空）走两层内存缓存：结果层（接口+全部参数为 key，命中毫秒级）+ bars 层（每股票每周期 132 根窗口 K 线，key 不含 n/m1/m2）。因此：调阈值/间距/开关等过滤参数毫秒级；调 n/m1/m2 只重递推不取数（秒级）；调 adjust 或回看超出窗口的截止周期才触发真实重算。新行情入库后按 `max(trade_date)` 水位自动失效。日/周线扫描走窗口裁剪，月/季线走 SQL 预聚合，信号判定均与全历史计算一致（H2 对拍保证）；单票 `/kdj/series` 不受影响，始终全历史实时计算。
 - `currGoldCrossMax` 传 0 就是字面 0（等于过滤掉几乎所有信号），无特殊语义；想"不限"，series / gold-cross / all-stocks 不传即可，trade-signal 传一个足够大的值。

@@ -41,6 +41,11 @@ public class AuthService {
     /** ip → 失败记录（count 连续失败次数，lockUntil 锁定截止 epochMillis） */
     private final Map<String, long[]> failMap = new ConcurrentHashMap<>();
 
+    /** 注册限流：ip → [当日成功数, 当日零点 epochSeconds]（内存计数，跨零点清零） */
+    private final Map<String, long[]> registerSuccessMap = new ConcurrentHashMap<>();
+    /** 同 IP 每日成功注册上限 */
+    private static final int REGISTER_DAILY_CAP = 5;
+
     public AuthService(@Value("${trade-signal.auth.access-key:}") String accessKey,
                        @Value("${trade-signal.auth.secure-cookie:true}") boolean secureCookie,
                        @Value("${trade-signal.auth.session-hours:168}") long sessionHours) {
@@ -91,32 +96,82 @@ public class AuthService {
         return false;
     }
 
+    // ---- 注册限流 ----
+
+    /** 距锁定还剩几次尝试（未锁定时供前端展示）。 */
+    public int remainingAttempts(String ip) {
+        long[] rec = failMap.get(ip);
+        return rec == null ? MAX_FAILS : Math.max(0, MAX_FAILS - (int) rec[0]);
+    }
+
+    /** 认证相关失败计数（登录失败/注册失败），与登录共用 5 次锁 15 分钟口径。 */
+    public void noteAuthFail(String ip, String reason) {
+        long[] rec = failMap.computeIfAbsent(ip, k -> new long[2]);
+        rec[0]++;
+        if (rec[0] >= MAX_FAILS) {
+            rec[0] = 0;
+            rec[1] = System.currentTimeMillis() + LOCK_MILLIS;
+            log.warn("AUTH locked ip={} ({} 次连续失败，锁 15 分钟)", ip, MAX_FAILS);
+        } else {
+            log.warn("AUTH fail ip={} reason={}", ip, reason);
+        }
+    }
+
+    /** 同 IP 每日成功注册上限（内存计数，跨零点清零）。 */
+    public boolean canRegister(String ip) {
+        long[] rec = registerSuccessMap.get(ip);
+        long todayStart = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.DAYS).getEpochSecond();
+        return rec == null || rec[1] != todayStart || rec[0] < REGISTER_DAILY_CAP;
+    }
+
+    public void noteRegisterSuccess(String ip) {
+        long todayStart = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.DAYS).getEpochSecond();
+        long[] rec = registerSuccessMap.computeIfAbsent(ip, k -> new long[]{0, todayStart});
+        if (rec[1] != todayStart) {
+            rec[0] = 0;
+            rec[1] = todayStart;
+        }
+        rec[0]++;
+    }
+
     // ---- token 签发与校验 ----
 
-    /** token = expiryEpochSeconds + "." + HmacSHA256(expiry, accessKey) */
-    public String issueToken() {
+    /** token = subject + "." + expiryEpochSeconds + "." + HmacSHA256(subject + "." + expiry)。
+     *  subject：密钥登录固定 "key"，用户登录为用户名（白名单字符集，无点号，分隔安全）。 */
+    public String issueToken(String subject) {
         String expiry = String.valueOf(Instant.now().getEpochSecond() + sessionSeconds);
-        return expiry + "." + hmacHex(expiry);
+        return subject + "." + expiry + "." + hmacHex(subject + "." + expiry);
     }
 
     public boolean isValidToken(String token) {
+        return subjectOf(token) != null;
+    }
+
+    /** 校验并解析 subject；不合法/过期/签名不符返回 null。 */
+    public String subjectOf(String token) {
         if (token == null) {
-            return false;
+            return null;
         }
-        int dot = token.indexOf('.');
-        if (dot <= 0) {
-            return false;
+        int first = token.indexOf('.');
+        int last = token.lastIndexOf('.');
+        if (first <= 0 || last <= first) {
+            return null;
         }
-        String expiry = token.substring(0, dot);
+        String subject = token.substring(0, first);
+        String expiry = token.substring(first + 1, last);
         try {
             if (Long.parseLong(expiry) < Instant.now().getEpochSecond()) {
-                return false;
+                return null;
             }
         } catch (NumberFormatException e) {
-            return false;
+            return null;
         }
-        return MessageDigest.isEqual(hmacHex(expiry).getBytes(StandardCharsets.UTF_8),
-                token.substring(dot + 1).getBytes(StandardCharsets.UTF_8));
+        String expect = hmacHex(subject + "." + expiry);
+        if (!MessageDigest.isEqual(expect.getBytes(StandardCharsets.UTF_8),
+                token.substring(last + 1).getBytes(StandardCharsets.UTF_8))) {
+            return null;
+        }
+        return subject;
     }
 
     /** 从请求里取认证 Cookie 并校验。 */

@@ -1,6 +1,6 @@
 # AGENTS.md — trade-signal
 
-KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基于 stock_quote 行情表实时计算 KDJ 与买入信号，不落库、无定时任务、无缓存。
+KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基于 stock_quote 行情表实时计算 KDJ 与买入信号，不落库、应用内无定时任务；扫描结果有内存缓存（见硬性约定）。
 
 ## 构建与测试
 
@@ -13,9 +13,9 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 
 ## 目录结构
 
-- `controller/` — HTTP 端点（`/kdj/series`、`/kdj/gold-cross`、`/kdj/trade-signal`、`/kdj/all-stocks`、`/kdj/periods`）
-- `service/` — 编排层：查行情 → 聚合 → 计算 → 判断 → 组装出参，不写数学逻辑
-- `handler/KDJHandler.java` — 全部核心计算（聚合、KDJ 递推、交叉点、交易位判断），**纯函数，不依赖 Spring 与数据库**
+- `controller/` — HTTP 端点（`/kdj/series`、`/kdj/gold-cross`、`/kdj/trade-signal`、`/kdj/all-stocks`、`/kdj/periods`、`POST /kdj/cache/refresh`）
+- `service/` — 编排层：查行情 → 聚合 → 计算 → 判断 → 组装出参，不写数学逻辑；`ScanResultCache` 是三个全市场扫描接口的结果缓存
+- `handler/KDJHandler.java` — 全部核心计算（聚合、KDJ 递推、交叉点、交易位判断），**纯函数，不依赖 Spring 与数据库**。例外：全市场扫描的月/季线聚合下推 SQL（`StockQuoteMapper.queryMonthlyBars/queryQuarterlyBars`，口径与 `KDJHandler.aggregate` 一致，`KDJScanWindowCacheTest` 逐 bar 对拍）；单票序列与日/周线扫描仍走 Java 聚合
 - `orm/` — MyBatis：entity + mapper 接口；XML 在 `resources/mapper/**`
 - `model/` — param（入参）/ dto / vo（出参）/ query（查询条件）
 - `convert/` — MapStruct DTO↔VO 转换
@@ -34,14 +34,17 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 - 周期类型用 `kdjType`："0"=日、"1"=周、"2"=月、"3"=季，不新增平行的 period 字段。
 - 复权类型用 `adjust`："0"=无复权、"1"=前复权（默认）、"2"=后复权（预留）；板块用 `boardType`："0"=沪深主板、"1"=科创板、"2"=创业板、"3"=北交所。
 - 日期用三字段规则：日/月度 `tradeDate`(yyyymmdd)；周度 `tradeDateMin/tradeDateMax`(yyyymmdd)；季度 `tradeDateMin/tradeDateMax`(yyyymm)。入参出参结构一致，不引入新日期字段。
-- KDJ 值与金叉/死叉/交易位事件**不落库、不缓存**，一律实时计算。
+- KDJ 值与金叉/死叉/交易位事件**不落库**，单票序列一律实时计算；全市场扫描有两层内存缓存（均按 `max(trade_date)` 水位自动失效，`POST /kdj/cache/refresh` 手动清空）：
+  - `ScanResultCache`（结果层）：三个扫描接口的最终列表，key = 接口 + 全部生效参数，命中毫秒级
+  - `ScanBarsCache`（bars 层）：每股票每周期的 132 根窗口 K 线（80 暖机 + 50 回看 + 2），key = code|adjust|kdjType（不含 n/m1/m2——递推全市场仅秒级，调参数只重递推不取数）；历史截止周期切前缀，`sliced.size() >= goldInternalMax+82` 才走缓存，否则按截止锚定重算不写缓存
+- 全市场扫描的行情加载：日/周线走窗口裁剪（`KDJServiceImpl.loadScanDailies`）；月/季线走 SQL 预聚合（`queryMonthlyBars/queryQuarterlyBars`，自连接取首尾价，~43ms/股，勿改回窗口函数写法——600ms/股）。信号判定与全历史一致；单票 `/kdj/series` 仍查全历史，不要给它加窗口。
 - 金叉/死叉判断用端点严格不等，交汇点用 `KDJHandler.calcKdCrossValue`（附A 修正版），不要重造。
 - `KDJHandler` 保持纯函数：要测试直接 JUnit 对拍，不要在里头注入任何 bean。
 
 ## 安全
 
 - 凭据只走环境变量（Java 侧 `TRADE_SIGNAL_DB_USER/PASSWORD`、`TRADE_SIGNAL_ACCESS_KEY`，scripts 侧 `DB_*` 且 `DB_PASSWORD` 无代码默认值），明文不进仓；yaml 里的缺省值仅是本机 dev 库。
-- **认证在 `auth/` 包**：密钥登录换 HMAC 签名 Cookie（无服务端会话），`/kdj/**` 由 AuthFilter 拦截 401，同 IP 失败 5 次锁 15 分钟。`TRADE_SIGNAL_ACCESS_KEY` 未配置时启动生成随机密钥打日志（本机开发模式），生产必须显式设置。
+- **认证在 `auth/` 包**：邀请码注册制用户体系（`app_user` 表，密码 BCrypt 哈希）+ 密钥登录并存；HMAC token 带 subject（用户名或 "key"），无服务端会话；`/kdj/**` 由 AuthFilter 拦截 401，同 IP 失败 5 次锁 15 分钟（登录/注册共用），注册另有同 IP 每日 5 个上限。邀请码走 `TRADE_SIGNAL_INVITE_CODES`（逗号分隔多码可轮换，空=注册关闭）；`TRADE_SIGNAL_ACCESS_KEY` 未配置时启动生成随机密钥打日志（本机开发模式），生产必须显式设置。
 - 入参白名单校验在 `KDJServiceImpl.validateParam`，新增枚举/开关参数要同步加。
 - **上公网事项已落实**（2026-08-04，详见 `docs/trade-signal-deployment.md` 与 `docs/SECURITY.md` 3.1）：HTTPS+安全头+CSP（前端已拆外置 css/js + vendor 本地化；CSP 含 `unsafe-eval`/`unsafe-inline` 两个刻意取舍，预编译模板后可去掉）、生产凭据全部独立随机值。
 

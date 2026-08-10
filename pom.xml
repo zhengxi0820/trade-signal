@@ -77,6 +77,12 @@
             <version>5.8.25</version>
         </dependency>
         <dependency>
+            <!-- BCrypt 密码哈希（用户体系），与 hutool-core 同版本 -->
+            <groupId>cn.hutool</groupId>
+            <artifactId>hutool-crypto</artifactId>
+            <version>5.8.25</version>
+        </dependency>
+        <dependency>
             <groupId>org.mapstruct</groupId>
             <artifactId>mapstruct</artifactId>
             <version>1.5.5.Final</version>

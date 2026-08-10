@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录页原型 — 交易位信号系统</title>
+<!--
+  原型（throwaway）：登录/注册页 UI 三变体，?variant=A|B|C 或底部条/左右方向键切换。
+  交互口径（与生产一致）：默认登录页；「立即注册」切注册页；注册成功 → 提示后跳回登录；
+  登录/注册输入状态完全独立；错误提示带剩余尝试次数、3 秒自动消失；5 次锁 15 分钟。
+  演示规则：登录密码 demo1234 为正确，其余为错误（扣次数）；注册任意合法输入即成功。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; min-height: 100vh; }
+  input { outline: none; }
+  button { cursor: pointer; border: none; }
+
+  /* ============ 共享：提示条（3 秒自动消失） ============ */
+  .toast { position: fixed; top: 24px; left: 50%; transform: translateX(-50%) translateY(-8px);
+    padding: 10px 22px; border-radius: 8px; font-size: 14px; z-index: 9999;
+    opacity: 0; pointer-events: none; transition: all .25s ease; box-shadow: 0 6px 24px rgba(30,90,180,.15); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #fef0f0; color: #d03050; border: 1px solid #fbc4d0; }
+  .toast.success { background: #ecf7ff; color: #0b6bcb; border: 1px solid #a8dcf7; }
+
+  /* ============ 变体 A：浮空玻璃卡 ============ */
+  .va { display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    background: linear-gradient(160deg, #f4f9ff 0%, #e8f2fd 45%, #dcebfb 100%); }
+  .va::before { content: ""; position: fixed; width: 480px; height: 480px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(64,158,255,.16), transparent 70%); top: -120px; right: -100px; }
+  .va::after { content: ""; position: fixed; width: 380px; height: 380px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(56,189,248,.14), transparent 70%); bottom: -100px; left: -80px; }
+  .va .card { position: relative; z-index: 1; width: 360px; padding: 44px 40px 36px;
+    background: rgba(255,255,255,.72); backdrop-filter: blur(14px);
+    border: 1px solid rgba(120,180,240,.35); border-radius: 18px;
+    box-shadow: 0 18px 60px rgba(50,110,200,.12), 0 0 0 1px rgba(255,255,255,.6) inset; }
+  .va .logo { text-align: center; margin-bottom: 8px; }
+  .va .logo svg { filter: drop-shadow(0 2px 10px rgba(64,158,255,.4)); }
+  .va h1 { text-align: center; font-size: 19px; font-weight: 600; color: #1a3a5c; letter-spacing: 2px; }
+  .va .sub { text-align: center; font-size: 12px; color: #7ca3cc; letter-spacing: 4px; margin: 6px 0 30px; }
+  .va .field { margin-bottom: 18px; }
+  .va input { width: 100%; border: none; border-bottom: 1.5px solid #cfe2f5; background: transparent;
+    padding: 10px 2px; font-size: 14px; color: #1a3a5c; transition: border-color .2s; }
+  .va input:focus { border-bottom-color: #3b9eff; }
+  .va input::placeholder { color: #a8c4e0; }
+  .va .btn { width: 100%; margin-top: 10px; padding: 12px; border-radius: 10px; font-size: 15px; letter-spacing: 6px;
+    color: #fff; background: linear-gradient(135deg, #4aa8ff, #2b8fe8); box-shadow: 0 6px 20px rgba(59,158,255,.35);
+    transition: transform .15s, box-shadow .15s; }
+  .va .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(59,158,255,.45); }
+  .va .switch { text-align: center; margin-top: 18px; font-size: 13px; color: #8fb0d4; }
+  .va .switch a { color: #2b8fe8; text-decoration: none; margin-left: 4px; cursor: pointer; }
+  .va .switch a:hover { text-decoration: underline; }
+
+  /* ============ 变体 B：左右分屏 ============ */
+  .vb { display: flex; min-height: 100vh; }
+  .vb .brand { flex: 1.15; position: relative; overflow: hidden; color: #eaf4ff;
+    background: linear-gradient(150deg, #0c2d52 0%, #14508f 55%, #2b8fe8 100%);
+    display: flex; flex-direction: column; justify-content: center; padding: 0 7%; }
+  .vb .brand::before { content: ""; position: absolute; inset: 0; opacity: .35;
+    background-image: linear-gradient(rgba(140,200,255,.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(140,200,255,.12) 1px, transparent 1px);
+    background-size: 44px 44px; }
+  .vb .brand::after { content: ""; position: absolute; left: 0; right: 0; height: 120px; top: 30%;
+    background: linear-gradient(180deg, transparent, rgba(120,200,255,.12), transparent); }
+  .vb .brand h1 { position: relative; font-size: 34px; font-weight: 600; letter-spacing: 6px; }
+  .vb .brand .en { position: relative; margin-top: 10px; font-size: 13px; letter-spacing: 5px; color: #9fd0f7; }
+  .vb .brand .line { position: relative; margin-top: 26px; width: 56px; height: 3px; background: #58c4ff; border-radius: 2px; }
+  .vb .brand p { position: relative; margin-top: 22px; font-size: 14px; line-height: 2; color: #b9d9f5; max-width: 380px; }
+  .vb .panel { flex: 1; display: flex; align-items: center; justify-content: center; background: #f7fafd; }
+  .vb .form { width: 340px; }
+  .vb .form h2 { font-size: 22px; color: #173a5e; font-weight: 600; }
+  .vb .form .tip { font-size: 13px; color: #93aec9; margin: 8px 0 30px; }
+  .vb .field { position: relative; margin-bottom: 16px; }
+  .vb .field label { display: block; font-size: 12px; color: #6f93b8; margin-bottom: 6px; letter-spacing: 1px; }
+  .vb input { width: 100%; padding: 11px 14px; font-size: 14px; color: #173a5e;
+    border: 1px solid #d6e5f3; border-radius: 8px; background: #fff; transition: border-color .2s, box-shadow .2s; }
+  .vb input:focus { border-color: #3b9eff; box-shadow: 0 0 0 3px rgba(59,158,255,.14); }
+  .vb .btn { width: 100%; margin-top: 8px; padding: 12px; border-radius: 8px; font-size: 15px;
+    color: #fff; background: #1c6dd0; letter-spacing: 4px; transition: background .2s; }
+  .vb .btn:hover { background: #2b8fe8; }
+  .vb .switch { text-align: center; margin-top: 20px; font-size: 13px; color: #8ba7c4; }
+  .vb .switch a { color: #1c6dd0; cursor: pointer; text-decoration: none; }
+  .vb .switch a:hover { text-decoration: underline; }
+
+  /* ============ 变体 C：HUD 科幻 ============ */
+  .vc { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #eef4fb; }
+  .vc::before { content: ""; position: fixed; inset: 0;
+    background-image: linear-gradient(rgba(80,160,230,.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(80,160,230,.07) 1px, transparent 1px);
+    background-size: 36px 36px; }
+  .vc::after { content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(120,190,250,.03) 3px 4px); }
+  /* clip-path 会连阴影/子元素一起裁掉，所以外壳负责定位与角标，frame 层出切角描边，inner 出白底 */
+  .vc .frame-outer { position: relative; z-index: 1; width: 400px; filter: drop-shadow(0 14px 40px rgba(40,110,200,.16)); }
+  .vc .frame { padding: 1.5px;
+    background: linear-gradient(160deg, rgba(120,190,250,.75), rgba(180,215,250,.35));
+    clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px); }
+  .vc .inner { background: rgba(252,254,255,.97); padding: 38px 36px 30px;
+    clip-path: polygon(17px 0, 100% 0, 100% calc(100% - 17px), calc(100% - 17px) 100%, 0 100%, 0 17px); }
+  .vc .corner { position: absolute; width: 14px; height: 14px; border: 2px solid #3b9eff; z-index: 2; }
+  .vc .corner.tl { top: -6px; left: -6px; border-right: none; border-bottom: none; }
+  .vc .corner.tr { top: -6px; right: -6px; border-left: none; border-bottom: none; }
+  .vc .corner.bl { bottom: -6px; left: -6px; border-right: none; border-top: none; }
+  .vc .corner.br { bottom: -6px; right: -6px; border-left: none; border-top: none; }
+  .vc h1 { font-size: 17px; color: #12365c; letter-spacing: 5px; font-weight: 600; }
+  .vc .sys { font-family: "Consolas", monospace; font-size: 11px; color: #58a6e8; letter-spacing: 3px; margin: 8px 0 28px; }
+  .vc .sys::before { content: "▸ "; color: #3b9eff; }
+  .vc .field { margin-bottom: 16px; }
+  .vc .field label { display: block; font-family: "Consolas", monospace; font-size: 10px; letter-spacing: 3px;
+    color: #6b98c4; margin-bottom: 6px; text-transform: uppercase; }
+  .vc input { width: 100%; padding: 11px 12px; font-size: 14px; color: #12365c; background: #f4f9fe;
+    border: 1px solid #cfe2f4; border-left: 3px solid #3b9eff;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%); transition: background .2s; }
+  .vc input:focus { background: #eaf4fd; }
+  .vc .btn { width: 100%; margin-top: 10px; padding: 12px; font-size: 14px; letter-spacing: 6px; color: #fff;
+    background: linear-gradient(90deg, #1f7ad6, #3b9eff);
+    clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%); transition: filter .15s; }
+  .vc .btn:hover { filter: brightness(1.1); }
+  .vc .switch { text-align: center; margin-top: 18px; font-size: 12px; letter-spacing: 1px; color: #7fa5cc; }
+  .vc .switch a { color: #1f7ad6; cursor: pointer; text-decoration: none; border-bottom: 1px dashed #7fb8ec; padding-bottom: 1px; }
+
+  /* ============ 原型切换条（不属于被评估的设计） ============ */
+  .proto-bar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10000;
+    display: flex; align-items: center; gap: 14px; padding: 8px 16px; border-radius: 999px;
+    background: #16283c; color: #cfe3f7; font-size: 13px; box-shadow: 0 8px 30px rgba(10,30,60,.35); }
+  .proto-bar button { background: #26405c; color: #cfe3f7; width: 28px; height: 28px; border-radius: 50%;
+    font-size: 15px; line-height: 1; }
+  .proto-bar button:hover { background: #35577c; }
+  .proto-bar .name { min-width: 180px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+
+<!-- 变体 A：浮空玻璃卡 -->
+<div class="va" data-variant="A">
+  <div class="card">
+    <div class="logo">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8l-6-4.6h7.6z" fill="#3b9eff"/>
+      </svg>
+    </div>
+    <h1>交易位信号系统</h1>
+    <div class="sub">TRADE SIGNAL</div>
+    <form data-mode="login">
+      <div class="field"><input name="username" placeholder="用户名" autocomplete="off"></div>
+      <div class="field"><input name="password" type="password" placeholder="密码"></div>
+      <button type="submit" class="btn">进 入</button>
+      <div class="switch">还没有账号？<a data-action="goto-register">立即注册</a> · <a data-action="use-key">访问密钥</a></div>
+    </form>
+    <form data-mode="register" style="display:none">
+      <div class="field"><input name="r-username" placeholder="用户名（3-20 位字母/数字/下划线）" autocomplete="off"></div>
+      <div class="field"><input name="r-password" type="password" placeholder="密码（8-64 位）"></div>
+      <div class="field"><input name="r-invite" placeholder="邀请码" autocomplete="off"></div>
+      <button type="submit" class="btn">注 册</button>
+      <div class="switch">已有账号？<a data-action="goto-login">返回登录</a></div>
+    </form>
+  </div>
+</div>
+
+<!-- 变体 B：左右分屏 -->
+<div class="vb" data-variant="B" style="display:none">
+  <div class="brand">
+    <h1>交易位信号系统</h1>
+    <div class="en">KDJ TRADE SIGNAL</div>
+    <div class="line"></div>
+    <p>基于 KDJ 指标的全市场交易位识别。<br>日 / 周 / 月 / 季四周期独立计算，金叉与交易位实时扫描。</p>
+  </div>
+  <div class="panel">
+    <div class="form">
+      <form data-mode="login">
+        <h2>登录</h2>
+        <div class="tip">欢迎回来，请登录你的账号</div>
+        <div class="field"><label>用户名</label><input name="username" autocomplete="off"></div>
+        <div class="field"><label>密码</label><input name="password" type="password"></div>
+        <button type="submit" class="btn">登 录</button>
+        <div class="switch">还没有账号？<a data-action="goto-register">立即注册</a> · <a data-action="use-key">访问密钥</a></div>
+      </form>
+      <form data-mode="register" style="display:none">
+        <h2>注册</h2>
+        <div class="tip">需要有效的邀请码</div>
+        <div class="field"><label>用户名</label><input name="r-username" placeholder="3-20 位字母/数字/下划线" autocomplete="off"></div>
+        <div class="field"><label>密码</label><input name="r-password" type="password" placeholder="8-64 位"></div>
+        <div class="field"><label>邀请码</label><input name="r-invite" autocomplete="off"></div>
+        <button type="submit" class="btn">注 册</button>
+        <div class="switch">已有账号？<a data-action="goto-login">返回登录</a></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 变体 C：HUD 科幻 -->
+<div class="vc" data-variant="C" style="display:none">
+  <div class="frame-outer">
+    <span class="corner tl"></span><span class="corner tr"></span>
+    <span class="corner bl"></span><span class="corner br"></span>
+    <div class="frame">
+      <div class="inner">
+        <h1>交易位信号系统</h1>
+        <div class="sys">SIGNAL.SYSTEM // AUTH</div>
+        <form data-mode="login">
+          <div class="field"><label>Username</label><input name="username" autocomplete="off"></div>
+          <div class="field"><label>Password</label><input name="password" type="password"></div>
+          <button type="submit" class="btn">进 入</button>
+          <div class="switch">还没有账号？<a data-action="goto-register">立即注册</a> · <a data-action="use-key">访问密钥</a></div>
+        </form>
+        <form data-mode="register" style="display:none">
+          <div class="field"><label>Username</label><input name="r-username" placeholder="3-20 位字母/数字/下划线" autocomplete="off"></div>
+          <div class="field"><label>Password</label><input name="r-password" type="password" placeholder="8-64 位"></div>
+          <div class="field"><label>Invite Code</label><input name="r-invite" autocomplete="off"></div>
+          <button type="submit" class="btn">注 册</button>
+          <div class="switch">已有账号？<a data-action="goto-login">返回登录</a></div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 原型切换条 -->
+<div class="proto-bar">
+  <button id="prev" title="←">‹</button>
+  <span class="name" id="vname"></span>
+  <button id="next" title="→">›</button>
+</div>
+
+<script>
+(function () {
+  var VARIANTS = { A: 'A — 浮空玻璃卡', B: 'B — 左右分屏', C: 'C — HUD 科幻' };
+  var keys = Object.keys(VARIANTS);
+
+  function currentVariant() {
+    var v = new URLSearchParams(location.search).get('variant');
+    return VARIANTS[v] ? v : 'A';
+  }
+  function show(v) {
+    keys.forEach(function (k) {
+      document.querySelector('[data-variant="' + k + '"]').style.display = k === v ? '' : 'none';
+    });
+    // flex 布局的还原
+    var el = document.querySelector('[data-variant="' + v + '"]');
+    el.style.display = (v === 'B') ? 'flex' : 'flex';
+    document.getElementById('vname').textContent = VARIANTS[v];
+    document.body.className = '';
+  }
+  function go(v) {
+    var url = new URL(location.href);
+    url.searchParams.set('variant', v);
+    history.replaceState(null, '', url);
+    show(v);
+  }
+  function step(dir) {
+    var i = keys.indexOf(currentVariant());
+    go(keys[(i + dir + keys.length) % keys.length]);
+  }
+  document.getElementById('prev').onclick = function () { step(-1); };
+  document.getElementById('next').onclick = function () { step(1); };
+  document.addEventListener('keydown', function (e) {
+    var t = document.activeElement;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+
+  // ---- 演示交互（不接后端）----
+  var MAX_FAILS = 5;
+  var fails = 0, locked = false;
+  var toastTimer = null;
+
+  function toast(msg, type) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast show ' + type;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.className = 'toast'; }, 3000); // 3 秒自动消失
+  }
+
+  document.querySelectorAll('[data-action="goto-register"]').forEach(function (a) {
+    a.onclick = function () { switchMode(a, 'register'); };
+  });
+  document.querySelectorAll('[data-action="goto-login"]').forEach(function (a) {
+    a.onclick = function () { switchMode(a, 'login'); };
+  });
+  document.querySelectorAll('[data-action="use-key"]').forEach(function (a) {
+    a.onclick = function () { toast('原型演示：密钥入口在正式版保留', 'success'); };
+  });
+  function switchMode(link, mode) {
+    var card = link.closest('.card, .form, .frame');
+    card.querySelectorAll('form').forEach(function (f) {
+      f.style.display = f.dataset.mode === mode ? '' : 'none';
+    });
+  }
+
+  document.querySelectorAll('form[data-mode="login"]').forEach(function (form) {
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      if (locked) { toast('尝试次数过多，已锁定 15 分钟', 'error'); return; }
+      var pw = form.querySelector('[name="password"]').value;
+      if (pw === 'demo1234') {
+        fails = 0;
+        toast('登录成功（原型演示）', 'success');
+      } else {
+        fails++;
+        var left = MAX_FAILS - fails;
+        if (left <= 0) {
+          locked = true;
+          toast('尝试次数过多，已锁定 15 分钟', 'error');
+        } else {
+          toast('用户名或密码错误，还可尝试 ' + left + ' 次', 'error');
+        }
+      }
+    };
+  });
+
+  document.querySelectorAll('form[data-mode="register"]').forEach(function (form) {
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      var u = form.querySelector('[name="r-username"]').value;
+      var p = form.querySelector('[name="r-password"]').value;
+      var c = form.querySelector('[name="r-invite"]').value;
+      if (!/^[a-zA-Z0-9_]{3,20}$/.test(u)) { toast('用户名需为 3-20 位字母/数字/下划线', 'error'); return; }
+      if (p.length < 8 || p.length > 64) { toast('密码需为 8-64 位', 'error'); return; }
+      if (!c) { toast('邀请码无效', 'error'); return; }
+      toast('注册成功，请登录', 'success');
+      switchMode(form.querySelector('h2') || form, 'login');
+      // switchMode 需要卡片内元素定位，这里直接处理：
+      var card = form.closest('.card, .form, .frame');
+      card.querySelectorAll('form').forEach(function (f) {
+        f.style.display = f.dataset.mode === 'login' ? '' : 'none';
+      });
+    };
+  });
+
+  show(currentVariant());
+})();
+</script>
+</body>
+</html>

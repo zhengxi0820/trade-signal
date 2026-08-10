@@ -58,6 +58,11 @@ public class StockQuoteQuery {
     private String tradeDate;
 
     /**
+     * 交易日期下限（含），yyyymmdd。全市场扫描窗口裁剪用，单票序列查询不传
+     */
+    private String tradeDateMin;
+
+    /**
      * 复权类型
      */
     private String adjust;

@@ -11,8 +11,9 @@
 数据源（2026-08 实测口径，重要）：
 - 主源新浪 stock_zh_a_daily：等比前复权，factor=qfq/raw 是干净阶梯（平台波动 ~1e-5），
   沪深北通吃（bj920xxx 实测可取），成交量单位为股，全历史单次返回、客户端按区间过滤。
-- 东财 stock_zh_a_hist 留作兜底：同为等比复权，但本机 push2his.eastmoney.com 直连被重置、
-  Clash 代理上游 502，当前实际不可用；网络恢复时自动启用。
+- 东财 stock_zh_a_hist：2026-08-08 起因服务器端限流实录**退出生产**（此前本机直连被重置、
+  Clash 代理 502），仅留应急兜底代码；东财 datacenter 公告日历（fetch.dividend）不受
+  影响，双轨不变。
 - 腾讯 newfqkline 弃用：其 qfq 是【等差（减法）复权】——实测 600519 段内 qfq=raw-79.58，
   段间常数跳变（差值=每股分红），factor=qfq/raw 随价格日内漂移 ±0.1%，
   不是阶梯函数，无法用于因子反推（会产生上百个伪事件）。
@@ -102,14 +103,14 @@ def fetch_hist_em(code: str, adjust: str, start: date, end: date) -> list:
 
 
 SOURCES = [("sina", fetch_hist_sina), ("eastmoney", fetch_hist_em)]
-SOURCES_EM_FIRST = [("eastmoney", fetch_hist_em), ("sina", fetch_hist_sina)]
+# 注（2026-08-08）：东财行情口（push2his）因限流实录已退出生产（日增/回填均新浪），
+# fetch_hist_em 仅作应急兜底保留；东财 datacenter 公告日历（fetch.dividend）不受影响。
 
 
 def fetch_pair(code: str, start: date, end: date, interval: float = 2.5, sources: list = None) -> tuple:
     """抓 none+qfq 两个口径（必须同源），带源切换与指数退避。返回 (raw_rows, qfq_rows, source)。
 
-    sources 默认新浪优先（全历史回填：东财本机被墙且新浪单次返回全历史）；
-    每日增量传 SOURCES_EM_FIRST（东财支持日期区间、窗口 payload 小，~3-6s/股）。
+    sources 默认 SOURCES（新浪优先，东财仅应急兜底）。
     """
     last_err = None
     for source_name, fetch_fn in (sources or SOURCES):

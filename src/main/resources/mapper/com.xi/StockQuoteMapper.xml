@@ -28,6 +28,9 @@
             <if test="tradeDate != null and tradeDate != ''">
                 and trade_date = #{tradeDate}
             </if>
+            <if test="tradeDateMin != null and tradeDateMin != ''">
+                and trade_date &gt;= #{tradeDateMin}
+            </if>
         </where>
         order by trade_date
     </select>
@@ -40,5 +43,63 @@
             </if>
         </where>
         order by code
+    </select>
+
+    <select id="queryMaxTradeDate" resultType="java.lang.String">
+        select max(trade_date) from stock_quote
+    </select>
+
+    <!--
+      月/季线 SQL 预聚合（全市场扫描用，口径与 KDJHandler.aggregate 一致：
+      high=周期内最大 high，low=周期内最小 low，open=周期首日 open，close=周期末日 close，
+      startDate/endDate=周期首/末交易日，未完结周期剔除）。
+      子查询按周期 GROUP BY 出首/末日与高低，再按 (code,adjust,trade_date) 唯一索引
+      自连接取首日 open / 末日 close（实测 ~40ms/股；窗口函数写法 ~600ms/股，不可用）。
+      全部为 MySQL 8 / H2 可移植写法（测试对拍直接跑同一条 SQL）。
+    -->
+    <sql id="quarterKeyExpr">
+        concat(left(trade_date, 4), case substring(trade_date, 5, 2)
+            when '01' then 'Q1' when '02' then 'Q1' when '03' then 'Q1'
+            when '04' then 'Q2' when '05' then 'Q2' when '06' then 'Q2'
+            when '07' then 'Q3' when '08' then 'Q3' when '09' then 'Q3'
+            else 'Q4' end)
+    </sql>
+
+    <select id="queryMonthlyBars" resultType="com.xi.model.dto.PeriodBarDTO">
+        select g.sd as startDate, g.ed as endDate,
+               o.open as open, g.hi as high, g.lo as low, c.close as close
+        from (
+            select period_key, min(td) as sd, max(td) as ed, max(hi) as hi, min(lo) as lo
+            from (
+                select left(trade_date, 6) as period_key,
+                       trade_date as td, high as hi, low as lo
+                from stock_quote
+                where code = #{code} and adjust = #{adjust} and trade_date &gt;= #{tradeDateMin}
+            ) t
+            group by period_key
+            having period_key &lt; #{currentPeriod}
+        ) g
+        join stock_quote o on o.code = #{code} and o.adjust = #{adjust} and o.trade_date = g.sd
+        join stock_quote c on c.code = #{code} and c.adjust = #{adjust} and c.trade_date = g.ed
+        order by g.ed
+    </select>
+
+    <select id="queryQuarterlyBars" resultType="com.xi.model.dto.PeriodBarDTO">
+        select g.sd as startDate, g.ed as endDate,
+               o.open as open, g.hi as high, g.lo as low, c.close as close
+        from (
+            select period_key, min(td) as sd, max(td) as ed, max(hi) as hi, min(lo) as lo
+            from (
+                select <include refid="quarterKeyExpr"/> as period_key,
+                       trade_date as td, high as hi, low as lo
+                from stock_quote
+                where code = #{code} and adjust = #{adjust} and trade_date &gt;= #{tradeDateMin}
+            ) t
+            group by period_key
+            having period_key &lt; #{currentPeriod}
+        ) g
+        join stock_quote o on o.code = #{code} and o.adjust = #{adjust} and o.trade_date = g.sd
+        join stock_quote c on c.code = #{code} and c.adjust = #{adjust} and c.trade_date = g.ed
+        order by g.ed
     </select>
 </mapper>

@@ -12,6 +12,7 @@
 - KDJ 值与金叉/死叉/交易位事件**均不落库**，全部基于 `stock_quote` 表现有数据**实时计算**（复权数据重刷、参数调整天然生效，无失效同步逻辑）。
 - **无定时任务**：用户打开页面时默认展示最新已完结交易日的日线全市场金叉列表 + 交易位股票列表；其余参数由用户在前端选择，实时计算。
 - 外部行情数据接入不在本系统范围（假设 `stock_quote`、`work_day` 已有数据）。
+- **数据新鲜度**：行情由 scripts 管线每周非交易日（周六）从新浪同步一次，最新数据延迟至最近一个周五（新浪本身滞后一交易日）；周中页面展示的"最新"周期即为该周五。2026-08-08 起生效（原为每日增量，因东财行情口限流改为周频新浪，见数据管线文档）。
 
 ## 2. KDJ 指标计算
 
@@ -149,19 +150,31 @@ public CrossPoint calcKdCrossValue(BigDecimal preK, BigDecimal preD, BigDecimal 
 | `GET /kdj/trade-signal` | 某周期出现交易位的股票列表 | 同上，先判金叉再按 4.2 六条过滤 |
 | `GET /kdj/all-stocks` | 全部股票的截止周期行情与 KDJ | 不过滤；截止周期有交叉时 crossValue 有值；供「所有股票」列表 |
 | `GET /kdj/periods` | 可选周期列表（已完结周期） | 基于 work_day 交易日历推导，供前端截止周期选择器 |
+| `POST /auth/register` | 注册（邀请码制） | 用户名+密码+邀请码；成功自动登录；邀请码由 `TRADE_SIGNAL_INVITE_CODES` 配置 |
+| `POST /auth/login` | 登录 | 用户名+密码，或密钥（服务器脚本用）；详见接口文档认证节 |
 
 ### 5.1 入参与出参
 
 参数表、出参字段、日期字段规则、调用示例以 [trade-signal-api.md](trade-signal-api.md) 为唯一权威来源，本节不再重复。与业务规则相关的默认值：kdjType="0"、adjust="1"（前复权）、n/m1/m2=9/3/3、lastGoldCrossMax=20、currGoldCrossMax（交易位 50 / 展示不限）、lastDeathCrossMax=50、goldInternalMin/Max=5/15、两个开关默认 "1"。
 
+### 5.2 用户体系
+
+邀请码注册制：`app_user` 表存用户名 + BCrypt 密码哈希（不落明文），邀请码校验通过才允许注册，用户名大小写不敏感唯一。登录换无状态 HMAC Cookie（subject=用户名）。防恶意注册：邀请码闸 + 同 IP 失败 5 次锁 15 分钟 + 同 IP 每日成功注册 ≤5 个 + STATUS 禁用开关。不做权限体系（后续需要再加）。
+
 ## 6. 性能
 
 - 单票全历史 KDJ 计算为 O(n) 递推，毫秒级，直接实时计算。
-- 暂不做缓存；全市场扫描每次实时计算。后续如有性能问题再评估缓存（届时 key 需含 kdjType、adjust、截止周期、全部信号参数）。
+- 全市场扫描（约 5500 只全历史计算会超时）= 窗口裁剪 + SQL 预聚合 + 两层内存缓存：
+  - **窗口裁剪**：交易位规则只回看最近两次金叉（间距 ≤ goldInternalMax），叠加 80 周期暖机后 KDJ 递推残差 < 1e-9，信号判定与全历史一致。
+  - **SQL 预聚合**：月/季线周期 K 线由数据库侧 GROUP BY + 自连接直接产出（~43ms/股），日/周线走窗口日线 + Java 聚合。
+  - **bars 缓存**：每股票每周期 132 根窗口 K 线（key=code|adjust|kdjType，不含 n/m1/m2——递推仅秒级，调参数只重递推不取数）；历史截止周期切前缀。
+  - **结果缓存**：三个扫描接口最终列表按「接口 + 全部生效参数」为 key，命中毫秒级。
+  - 两层缓存均以 `max(trade_date)` 为水位自动失效，`POST /kdj/cache/refresh` 手动清空；不落库。
 
 ## 7. 非目标
 
 - 不做定时任务。
 - 不做独立前端工程（前端为内嵌静态页）。
 - KDJ 值、金叉/死叉/交易位事件不落库。
+- 用户体系不做权限/角色表、手机号/邮箱验证、找回密码（v1 仅邀请码注册 + 用户名密码登录 + STATUS 禁用开关）。
 - 不做外部行情数据接入（Java 主体只读库；数据灌入由 `scripts/` python 管线承担，口径见 [trade-signal-data-pipeline.md](trade-signal-data-pipeline.md)）。

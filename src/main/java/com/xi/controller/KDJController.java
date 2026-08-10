@@ -10,10 +10,12 @@ import com.xi.model.vo.WorkDayVO;
 import com.xi.service.KDJService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/kdj")
@@ -61,5 +63,13 @@ public class KDJController {
     @GetMapping("/all-stocks")
     public List<CrossStockVO> getAllStocks(KDJParam kdjParam) {
         return kdjService.getAllStocks(kdjParam);
+    }
+
+    /**
+     * 清空全市场扫描结果缓存（运维兜底；日常失效靠数据水位自动完成）
+     */
+    @PostMapping("/cache/refresh")
+    public Map<String, Integer> refreshCache() {
+        return Map.of("cleared", kdjService.clearScanCache());
     }
 }

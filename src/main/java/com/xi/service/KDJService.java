@@ -50,4 +50,11 @@ public interface KDJService {
      * @return 周期列表，时间倒序
      */
     List<WorkDayVO> getPeriods(WorkDayParam param);
+
+    /**
+     * 清空全市场扫描结果缓存（运维兜底；日常失效靠数据水位自动完成）
+     *
+     * @return 清掉的缓存条数
+     */
+    int clearScanCache();
 }

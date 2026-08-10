@@ -29,7 +29,39 @@
     #kdjChart { width: 100%; height: 560px; }
     tr.clickable-row { cursor: pointer; }
     /* 密钥认证遮罩：未认证时盖住整页，数据接口本就 401，页壳不含数据 */
-    .auth-overlay { position: fixed; inset: 0; background: #f2f4f8; z-index: 3000; display: flex; align-items: center; justify-content: center; }
-    .auth-card { width: 340px; }
-    .auth-title { text-align: center; font-weight: 600; font-size: 16px; margin-bottom: 16px; }
-    .auth-error { color: #F56C6C; font-size: 13px; margin-top: 10px; text-align: center; }
+    /* 认证遮罩（A 版：浮空玻璃卡） */
+    .auth-overlay { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(160deg, #f4f9ff 0%, #e8f2fd 45%, #dcebfb 100%); overflow: hidden; }
+    .auth-overlay::before { content: ""; position: absolute; width: 480px; height: 480px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(64,158,255,.16), transparent 70%); top: -120px; right: -100px; }
+    .auth-overlay::after { content: ""; position: absolute; width: 380px; height: 380px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(56,189,248,.14), transparent 70%); bottom: -100px; left: -80px; }
+    .auth-card { position: relative; z-index: 1; width: 360px; padding: 44px 40px 36px;
+      background: rgba(255,255,255,.72); backdrop-filter: blur(14px);
+      border: 1px solid rgba(120,180,240,.35); border-radius: 18px;
+      box-shadow: 0 18px 60px rgba(50,110,200,.12), 0 0 0 1px rgba(255,255,255,.6) inset; }
+    .auth-logo { text-align: center; margin-bottom: 8px; }
+    .auth-logo svg { filter: drop-shadow(0 2px 10px rgba(64,158,255,.4)); }
+    .auth-title { text-align: center; font-size: 19px; font-weight: 600; color: #1a3a5c; letter-spacing: 2px; }
+    .auth-sub { text-align: center; font-size: 12px; color: #7ca3cc; letter-spacing: 4px; margin: 6px 0 30px; }
+    .auth-field { margin-bottom: 18px; }
+    .auth-field input { width: 100%; border: none; border-bottom: 1.5px solid #cfe2f5; background: transparent;
+      padding: 10px 2px; font-size: 14px; color: #1a3a5c; outline: none; transition: border-color .2s; box-sizing: border-box; }
+    .auth-field input:focus { border-bottom-color: #3b9eff; }
+    .auth-field input::placeholder { color: #a8c4e0; }
+    .auth-btn { width: 100%; margin-top: 10px; padding: 12px; border: none; border-radius: 10px; font-size: 15px;
+      letter-spacing: 6px; color: #fff; cursor: pointer;
+      background: linear-gradient(135deg, #4aa8ff, #2b8fe8); box-shadow: 0 6px 20px rgba(59,158,255,.35);
+      transition: transform .15s, box-shadow .15s; }
+    .auth-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(59,158,255,.45); }
+    .auth-btn:disabled { opacity: .7; cursor: not-allowed; }
+    .auth-switch { text-align: center; margin-top: 18px; font-size: 13px; color: #8fb0d4; }
+    .auth-switch a { color: #2b8fe8; text-decoration: none; margin-left: 4px; cursor: pointer; }
+    .auth-switch a:hover { text-decoration: underline; }
+    /* 认证提示条：3 秒自动消失 */
+    .auth-toast { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 3001;
+      padding: 10px 22px; border-radius: 8px; font-size: 14px; box-shadow: 0 6px 24px rgba(30,90,180,.15);
+      animation: auth-toast-in .25s ease; }
+    .auth-toast.error { background: #fef0f0; color: #d03050; border: 1px solid #fbc4d0; }
+    .auth-toast.success { background: #ecf7ff; color: #0b6bcb; border: 1px solid #a8dcf7; }
+    @keyframes auth-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }

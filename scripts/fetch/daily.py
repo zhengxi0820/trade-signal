@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""daily.py — 每日增量抓取（生产口径，2026-08-05 起）
+"""daily.py — 增量抓取（生产口径：周频，2026-08-08 起每周六 09:17 cron）
 
 流程：对股票清单逐只爬近几日 none+qfq → 取库中尚无的交易日 → adjust.incremental 逐日应用。
 串行真限流 sleep + 指数退避重试，与 fetch.history 同款。
 
-源策略（与回填不同的关键点）：
-- **东财优先**（SOURCES_EM_FIRST）：stock_zh_a_hist 支持 start/end 日期区间，10 天窗口
-  payload 极小，每股 ~3-6s；新浪 stock_zh_a_daily 无视日期参数每次返回全历史（~15-20s/股），
-  只做兜底。none/qfq 必须同源（复权基期一致），源切换以"股"为单位整体切换。
-- 东财 qfq 与新浪同为等比前复权（锚定最新价），增量只看最近 factor（≈1 附近），
-  与回填期的新浪基线兼容；东财成交量为手已 ×100 转股，与新浪口径一致。
-- 限流 sleep 降到 1s（窗口小、请求轻），指数退避重试保留。
+源策略（2026-08-08 用户拍板，此前"东财熔断器+盘中行过滤"方案作废）：
+- **新浪 stock_zh_a_daily 是唯一行情源**（fetch_pair 默认源序）。东财行情口（push2his）
+  因限流实录彻底退出；东财 datacenter 除权公告日历保留（双轨不变，见 merge.py）。
+- 接受一周延迟：新浪无视日期参数、每次返回全历史（~15-20s/股），日频全量不可行，
+  故改为**每周六同步本周未爬数据**（flock 防重叠 + 断点幂等，漏跑下周自然补齐）。
+- 新浪数据本身滞后一个交易日：周六跑时本周五数据已齐。
+- 全量 --all（5535 只）周跑预计 23~30h。
 
 用法（在 scripts/ 目录下）：
     python -m fetch.daily --codes 600519 600030
-    python -m fetch.daily --all        # stock_info 全量（5535 只，预计 4~8h，cron 日跑）
+    python -m fetch.daily --all        # stock_info 全量（周频 cron 触发）
 """
 
 import argparse
@@ -26,10 +26,10 @@ os.environ["NO_PROXY"] = "*"
 
 from adjust.incremental import apply_daily
 from common.db import get_conn
-from fetch.history import fetch_pair, upsert_quote_rows, SOURCES_EM_FIRST
+from fetch.history import fetch_pair, upsert_quote_rows
 
 LOOKBACK_DAYS = 10  # 每次回看窗口，覆盖周末/节假日/漏跑
-INTERVAL = 1.0      # 窗口请求轻，限流降到 1s（回填仍 2.5s）
+INTERVAL = 2.5      # 新浪全历史抓取为重请求，限流与回填一致（2.5s）
 
 
 def known_dates(conn, code: str, adjust: str, since: date) -> set:
@@ -44,8 +44,8 @@ def known_dates(conn, code: str, adjust: str, since: date) -> set:
 def run_daily_one(conn, code: str, interval: float = INTERVAL) -> dict:
     end = date.today()
     start = end - timedelta(days=LOOKBACK_DAYS)
-    raw_rows, qfq_rows, source = fetch_pair(code, start, end, interval,
-                                            sources=SOURCES_EM_FIRST)
+    # 默认源序（新浪唯一行情源，东财行情口已退出）
+    raw_rows, qfq_rows, source = fetch_pair(code, start, end, interval)
     qfq_by_date = {r["trade_date"]: r for r in qfq_rows}
     done = known_dates(conn, code, "0", start)
 

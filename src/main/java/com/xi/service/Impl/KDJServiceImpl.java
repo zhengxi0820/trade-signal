@@ -2,6 +2,7 @@ package com.xi.service.Impl;
 
 import com.xi.handler.KDJHandler;
 import com.xi.model.dto.KDJDTO;
+import com.xi.model.dto.PeriodBarDTO;
 import com.xi.model.param.KDJParam;
 import com.xi.model.param.WorkDayParam;
 import com.xi.model.query.StockQuoteQuery;
@@ -15,6 +16,8 @@ import com.xi.orm.mapper.StockInfoMapper;
 import com.xi.orm.mapper.StockQuoteMapper;
 import com.xi.orm.mapper.WorkDayMapper;
 import com.xi.service.KDJService;
+import com.xi.service.ScanBarsCache;
+import com.xi.service.ScanResultCache;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -23,6 +26,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +49,20 @@ public class KDJServiceImpl implements KDJService {
     private static final BigDecimal DEFAULT_GOLD_INTERNAL_MIN = new BigDecimal("5");
     private static final BigDecimal DEFAULT_GOLD_INTERNAL_MAX = new BigDecimal("15");
     private static final String SWITCH_ON = "1";
+    /**
+     * 扫描窗口暖机周期数。KDJ 递推误差每周期衰减 (1-1/m1)，m1=3 时 80 周期后
+     * 初始条件残差 < 1e-13，叠加每步 1e-10 舍入再量子化，窗口与全历史结果
+     * 偏差不超 1e-9 量级——远低于交叉判断的 K-D 差与展示精度（2 位小数），
+     * 信号判定（哪些股票入选）与全历史完全一致。
+     */
+    private static final int SCAN_WARMUP_BARS = 80;
+    /** 金叉/死叉判断需用到当前根及其前一根，基础窗口 = 暖机 + 2 */
+    private static final int SCAN_BASE_BARS = SCAN_WARMUP_BARS + 2;
+    /**
+     * bars 缓存的固定窗口：暖机 80 + 回看余量 50 + 2 = 132。
+     * 回看余量决定可走缓存的 goldInternalMax 上限（≤50），超出按实际参数重算不缓存。
+     */
+    private static final int SCAN_CACHE_WINDOW = 132;
 
     // 入参白名单（SECURITY.md 2.4：外部输入校验类型/长度/白名单）
     private static final Set<String> ADJUST_VALUES = Set.of("0", "1", "2");
@@ -62,6 +81,12 @@ public class KDJServiceImpl implements KDJService {
 
     @Autowired
     private StockInfoMapper stockInfoMapper;
+
+    @Autowired
+    private ScanResultCache scanResultCache;
+
+    @Autowired
+    private ScanBarsCache scanBarsCache;
 
     private final KDJHandler kdjHandler = new KDJHandler();
 
@@ -125,12 +150,16 @@ public class KDJServiceImpl implements KDJService {
     @Override
     public List<CrossStockVO> getAllStocks(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
+        String cacheKey = scanCacheKey("all-stocks", kdjParam);
+        List<CrossStockVO> cached = scanResultCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         for (String code : targetCodes(kdjParam)) {
             kdjParam.setCode(code);
-            List<StockQuoteDO> dailies = loadDailies(kdjParam);
-            List<KDJHandler.PeriodBar> bars = loadPeriodBars(kdjParam, dailies);
+            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, SCAN_BASE_BARS);
             if (bars.isEmpty()) {
                 continue;
             }
@@ -147,18 +176,23 @@ public class KDJServiceImpl implements KDJService {
             }
             result.add(buildCrossStockVO(bars, kdjList, cross, kdjParam, infoMap.get(code)));
         }
+        scanResultCache.put(cacheKey, result);
         return result;
     }
 
     @Override
     public List<CrossStockVO> getGold(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
+        String cacheKey = scanCacheKey("gold-cross", kdjParam);
+        List<CrossStockVO> cached = scanResultCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         for (String code : targetCodes(kdjParam)) {
             kdjParam.setCode(code);
-            List<StockQuoteDO> dailies = loadDailies(kdjParam);
-            List<KDJHandler.PeriodBar> bars = loadPeriodBars(kdjParam, dailies);
+            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, SCAN_BASE_BARS);
             if (bars.isEmpty()) {
                 continue;
             }
@@ -168,6 +202,7 @@ public class KDJServiceImpl implements KDJService {
                 result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, infoMap.get(code)));
             }
         }
+        scanResultCache.put(cacheKey, result);
         return result;
     }
 
@@ -175,12 +210,18 @@ public class KDJServiceImpl implements KDJService {
     public List<CrossStockVO> getTradeSignalStockList(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
         fillTradeSignalDefaults(kdjParam);
+        String cacheKey = scanCacheKey("trade-signal", kdjParam);
+        List<CrossStockVO> cached = scanResultCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
+        // 交易位需回看上次金叉，窗口 = 间距上限 + 暖机；间距参数可配，窗口随参数放大
+        int periodBars = kdjParam.getGoldInternalMax().intValue() + SCAN_BASE_BARS;
         for (String code : targetCodes(kdjParam)) {
             kdjParam.setCode(code);
-            List<StockQuoteDO> dailies = loadDailies(kdjParam);
-            List<KDJHandler.PeriodBar> bars = loadPeriodBars(kdjParam, dailies);
+            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, periodBars);
             if (bars.isEmpty()) {
                 continue;
             }
@@ -190,7 +231,158 @@ public class KDJServiceImpl implements KDJService {
                 result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, infoMap.get(code)));
             }
         }
+        scanResultCache.put(cacheKey, result);
         return result;
+    }
+
+    @Override
+    public int clearScanCache() {
+        return scanResultCache.clear() + scanBarsCache.clear();
+    }
+
+    /**
+     * 全市场扫描的周期K线获取：优先走 ScanBarsCache（按最新周期锚定的 120 根窗口，
+     * key = code|adjust|kdjType），再按截止周期切前缀；截止太早导致前缀不足以覆盖
+     * 暖机+回看，或所需窗口超过缓存窗口（goldInternalMax > 38）时，按截止周期锚定
+     * 重算且不写缓存。
+     */
+    private List<KDJHandler.PeriodBar> scanBarsFor(KDJParam kdjParam, int periodBars) {
+        if (periodBars <= SCAN_CACHE_WINDOW) {
+            String key = ScanBarsCache.key(kdjParam.getCode(), kdjParam.getAdjust(), kdjParam.getKdjType());
+            List<KDJHandler.PeriodBar> window = scanBarsCache.get(key);
+            if (window == null) {
+                window = loadScanBars(kdjParam, SCAN_CACHE_WINDOW, LocalDate.now());
+                scanBarsCache.put(key, window);
+            }
+            List<KDJHandler.PeriodBar> sliced = truncateAtEndPeriod(window, kdjParam);
+            if (sliced.size() >= periodBars) {
+                return sliced;
+            }
+        }
+        return truncateAtEndPeriod(loadScanBars(kdjParam, periodBars, scanAnchor(kdjParam)), kdjParam);
+    }
+
+    /**
+     * 加载窗口周期K线：日/周线走「窗口日线 + Java 聚合」（窗口已裁得够小），
+     * 月/季线走 SQL 预聚合（StockQuoteMapper.queryMonthlyBars/queryQuarterlyBars，
+     * 传输量从数千行/股降到数十行/股）。
+     */
+    private List<KDJHandler.PeriodBar> loadScanBars(KDJParam kdjParam, int periodBars, LocalDate anchor) {
+        if ("2".equals(kdjParam.getKdjType()) || "3".equals(kdjParam.getKdjType())) {
+            return loadScanAggregatedBars(kdjParam, periodBars, anchor);
+        }
+        List<StockQuoteDO> dailies = loadScanDailies(kdjParam, periodBars, anchor);
+        return kdjHandler.aggregate(dailies, kdjParam.getKdjType(), LocalDate.now());
+    }
+
+    /**
+     * 月/季线 SQL 预聚合：聚合口径与 KDJHandler.aggregate 一致（KDJScanWindowCacheTest 对拍保证），
+     * 未完结周期由 currentPeriod 参数剔除。
+     */
+    private List<KDJHandler.PeriodBar> loadScanAggregatedBars(KDJParam kdjParam, int periodBars, LocalDate anchor) {
+        boolean monthly = "2".equals(kdjParam.getKdjType());
+        int daysPerBar = monthly ? 32 : 100;
+        String tradeDateMin = anchor
+                .minusDays((long) periodBars * daysPerBar)
+                .format(DateTimeFormatter.BASIC_ISO_DATE);
+        List<PeriodBarDTO> rows = monthly
+                ? stockQuoteMapper.queryMonthlyBars(kdjParam.getCode(), kdjParam.getAdjust(),
+                        tradeDateMin, currentMonthKey())
+                : stockQuoteMapper.queryQuarterlyBars(kdjParam.getCode(), kdjParam.getAdjust(),
+                        tradeDateMin, currentQuarterKey());
+        List<KDJHandler.PeriodBar> bars = new ArrayList<>(rows.size());
+        for (PeriodBarDTO row : rows) {
+            KDJHandler.PeriodBar bar = new KDJHandler.PeriodBar();
+            bar.startDate = row.getStartDate();
+            bar.endDate = row.getEndDate();
+            bar.open = row.getOpen();
+            bar.high = row.getHigh();
+            bar.low = row.getLow();
+            bar.close = row.getClose();
+            bars.add(bar);
+        }
+        return bars;
+    }
+
+    /** 当前月周期 key（yyyyMM），供 SQL 剔除未完结当月 */
+    private static String currentMonthKey() {
+        return YearMonth.now().format(DateTimeFormatter.ofPattern("yyyyMM"));
+    }
+
+    /** 当前季周期 key（yyyyQn），供 SQL 剔除未完结当季 */
+    private static String currentQuarterKey() {
+        LocalDate now = LocalDate.now();
+        return now.getYear() + "Q" + ((now.getMonthValue() - 1) / 3 + 1);
+    }
+
+    /**
+     * 全市场扫描用的日线加载（日/周线）：把所需周期 bar 数换算成日历天下界，
+     * 只加载窗口内的日线（uk_code_adjust_date 索引范围扫描）。
+     * 窗口含 80 周期暖机，扫描的信号判定与全历史完全一致（见 SCAN_WARMUP_BARS 注释）。
+     * 单票序列（getAllKDJ）仍走 loadDailies 全历史。
+     *
+     * @param periodBars 需要的周期 bar 数（含暖机与信号回看）
+     * @param anchor     窗口锚点（最新周期=今天；历史截止=截止周期末）
+     */
+    private List<StockQuoteDO> loadScanDailies(KDJParam kdjParam, int periodBars, LocalDate anchor) {
+        int daysPerBar = "1".equals(kdjParam.getKdjType()) ? 8 : 3;
+        String tradeDateMin = anchor
+                .minusDays((long) periodBars * daysPerBar)
+                .format(DateTimeFormatter.BASIC_ISO_DATE);
+        StockQuoteQuery query = new StockQuoteQuery();
+        query.setCode(kdjParam.getCode());
+        query.setAdjust(kdjParam.getAdjust());
+        query.setTradeDateMin(tradeDateMin);
+        return stockQuoteMapper.queryAll(query);
+    }
+
+    /**
+     * 扫描窗口的锚点：指定了截止周期则锚在截止周期末，否则锚在今天。
+     * 与 truncateAtEndPeriod 同一套入参规则。
+     */
+    private LocalDate scanAnchor(KDJParam kdjParam) {
+        switch (kdjParam.getKdjType()) {
+            case "1":
+                if (StringUtils.hasText(kdjParam.getTradeDateMax())) {
+                    return LocalDate.parse(kdjParam.getTradeDateMax(), DateTimeFormatter.BASIC_ISO_DATE);
+                }
+                break;
+            case "2":
+                if (StringUtils.hasText(kdjParam.getTradeDate())) {
+                    return YearMonth.parse(kdjParam.getTradeDate().substring(0, 6),
+                            DateTimeFormatter.ofPattern("yyyyMM")).atEndOfMonth();
+                }
+                break;
+            case "3":
+                if (StringUtils.hasText(kdjParam.getTradeDateMax())) {
+                    return YearMonth.parse(kdjParam.getTradeDateMax(),
+                            DateTimeFormatter.ofPattern("yyyyMM")).atEndOfMonth();
+                }
+                break;
+            default:
+                if (StringUtils.hasText(kdjParam.getTradeDate())) {
+                    return LocalDate.parse(kdjParam.getTradeDate(), DateTimeFormatter.BASIC_ISO_DATE);
+                }
+                break;
+        }
+        return LocalDate.now();
+    }
+
+    /**
+     * 扫描结果缓存 key：接口名 + 全部生效参数（默认值已填充）。
+     */
+    private String scanCacheKey(String endpoint, KDJParam p) {
+        return String.join("|", endpoint,
+                str(p.getAdjust()), str(p.getKdjType()), str(p.getCode()),
+                str(p.getTradeDate()), str(p.getTradeDateMin()), str(p.getTradeDateMax()),
+                str(p.getN()), str(p.getM1()), str(p.getM2()),
+                str(p.getLastGoldCrossMax()), str(p.getCurrGoldCrossMax()), str(p.getLastDeathCrossMax()),
+                str(p.getGoldInternalMin()), str(p.getGoldInternalMax()),
+                str(p.getOpenClosePriceLimit()), str(p.getGoldCrossLimit()));
+    }
+
+    private static String str(Object value) {
+        return value == null ? "-" : value.toString();
     }
 
     /**

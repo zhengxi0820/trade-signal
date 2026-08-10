@@ -43,12 +43,16 @@ python verify_fix.py
 # 交易日历：从 stock_quote 生成 work_day
 python -m adjust.workday
 
+# 新股维护（周频前置步骤）：名单刷新 → 新增/自愈检测 → 全历史回填 → 登记 stock_info
+python -m fetch.new_stocks --dry-run    # 只检测打印不写库；--simulate CODE 模拟新增分支
+python -m fetch.new_stocks              # 生产执行（幂等，无新增 0 成本）
+
 # 增量（生产，周频）：新浪唯一行情源（全历史抓取 ~15-20s/股），幂等可重跑
 python -m fetch.daily --codes 600519 600030
 python -m fetch.daily --all        # 全量 5535 只，周跑预计 23~30h
 # 服务器已由 /etc/cron.d/trade-signal-daily 周跑（每周六 09:17，wrapper run_daily.sh：
-# flock 防重叠 → fetch.daily --all → adjust.workday 刷交易日历 → warm_cache 预热，
-# 日志 daily.log）；东财行情口已退出生产（限流实录），公告日历（fetch.dividend）保留
+# flock 防重叠 → fetch.new_stocks 新股维护 → fetch.daily --all → adjust.workday 刷交易日历
+# → warm_cache 预热，日志 daily.log）；东财行情口已退出生产（限流实录），公告日历保留
 ```
 
 ## 目录

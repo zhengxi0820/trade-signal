@@ -25,7 +25,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 
 - **name/market 唯一来源是 `stock_info`**，`stock_quote` 不冗余这两列；出参 name/market 由 service 查 stock_info 填充。
 - **复权自建**：`stock_quote.ADJUST='0'` 原始行只追加；`ADJUST='1'` 前复权行由 `scripts/adjust/` 因子反推自算（factor(t)=爬取qfq÷raw 的阶梯函数，跳变点即除权日，事件存 `stock_dividend`），可重算覆盖。新除权事件只需该股历史 qfq 行乘新因子。
-- 数据源实测口径（新浪主源等比复权、腾讯为等差复权不可用、东财直连受限）见 `docs/trade-signal-data-pipeline.md`。
+- 数据源实测口径（新浪为唯一行情源、等比复权；东财行情口限流退出、仅保留公告日历；腾讯等差复权不可用）见 `docs/trade-signal-data-pipeline.md`。同步节奏：每周六 09:17 周频全量窗口同步（含新股检测回填），数据延迟至最近周五。
 
 ## 硬性约定
 

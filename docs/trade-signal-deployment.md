@@ -14,9 +14,9 @@
 |---|---|
 | 应用 jar | `/opt/trade-signal/app.jar` |
 | 凭据文件（600, root） | `/etc/trade-signal.env`（DB 账号密码 + 访问密钥） |
-| systemd 服务 | `trade-signal.service`（用户 `tradesignal`，Restart=on-failure） |
+| systemd 服务 | `trade-signal.service`（用户 `tradesignal`，Restart=on-failure，`java -Xmx1536m -jar`） |
 | Caddy 配置 | `/etc/caddy/Caddyfile` |
-| 备份 | `/var/backups/trade-signal/`（cron `/etc/cron.d/trade-signal-backup`，每日 03:17，保留 7 天；注意 cron.d 文件必须 root:root 644，否则被拒跑） |
+| 备份 | `/var/backups/trade-signal/`（cron `/etc/cron.d/trade-signal-backup`，**每周一 03:47**（周六同步完成后），**只保留最新一份**；注意 cron.d 文件必须 root:root 644，否则被拒跑） |
 | 每周行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每周六 09:17** 跑 `run_daily.sh`（新浪全历史源周频同步 + work_day 刷新 + 缓存预热），日志 `/home/ops/scripts/daily.log`，预计 23~30h |
 | 运维账号 | `ops`（密钥登录 + sudo NOPASSWD）；root 直登已禁，密码/扫码认证已关 |
 
@@ -56,6 +56,11 @@ zcat /var/backups/trade-signal/trade_signal-<日期>.sql.gz | sudo mysql trade_s
 
 ## 已完成里程碑
 
+- 2026-08-10 MySQL 性能修复：`innodb_buffer_pool_size` 默认 128M → 768M（`/etc/mysql/mysql.conf.d/zz-trade-signal.cnf`）。根因实录：stock_quote 数据+索引 ~11GB，128M 缓冲池导致全市场扫描全走磁盘（冷 ~1s/股 vs 热 ~40ms/股），月/季线深历史扫描超时 3600s 的元凶
+- 2026-08-10 14 只试点股历史补齐（agent-0 双轨重灌，0 失败）：茅台/中信/包钢等 10 只从 3-5 年试点窗补到 IPO 全历史（另 4 只试点起点即 IPO 日本就完整）；两口径 1:1、对拍全部舍入级；副作用：这 14 只水位到 20260807（全市场 20260806），周六周频首跑自动对齐
+- 2026-08-10 前端性能修复：所有股票表 el-table 全量渲染 5534 行卡顿 → 前端分页（100/页）；后端接口本就毫秒级，卡顿是浏览器 DOM 渲染瓶颈
+- 2026-08-10 用户体系上线：邀请码注册制（`app_user` 表 + `TRADE_SIGNAL_INVITE_CODES` 环境变量，值在 /etc/trade-signal.env 不入仓）+ 用户名密码登录（密钥登录保留给脚本）+ 登录页 A 版（浮空玻璃卡）；admin 账号已建；token 带 subject，旧 Cookie 已失效一轮
+- 2026-08-10 扫描性能二级缓存上线：ScanBarsCache（132 根窗口 bars，调过滤参数毫秒级、调 n/m1/m2 秒级）+ JVM -Xmx1536m；warm_cache.sh 复刻前端全量参数预热（key 才能对上）+ --max-time 3600（防僵尸计算叠加）
 - 2026-08-08 数据源策略切换：东财行情口限流 3 天（全量回填后疑似被拉黑名单），行情源改为**新浪周频**（每周六 09:17，接受数据延迟至最近周五）；东财 datacenter 公告日历保留（双轨不变）；熔断器/盘中行过滤方案随之作废
 - 2026-08-08 数据对齐清理：停掉重叠爬取任务，删除 20260807 半成品行 7156 行，全市场 5527 只对齐 20260806；删除前手动备份（1.67GB）
 - 2026-08-08 备份 cron 修复：/etc/cron.d/trade-signal-backup 属主 ops 被 cron 拒跑（WRONG FILE OWNER，8-05 起 4 天无备份），已 chown root:root

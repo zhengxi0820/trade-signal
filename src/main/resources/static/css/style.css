@@ -26,6 +26,7 @@
      * 从而冒出横向滚动条——直接禁掉横向滚动。
      */
     .all-card .el-table__body-wrapper { overflow-x: hidden; }
+    .all-pager { margin-top: 8px; justify-content: flex-end; }
     #kdjChart { width: 100%; height: 560px; }
     tr.clickable-row { cursor: pointer; }
     /* 密钥认证遮罩：未认证时盖住整页，数据接口本就 401，页壳不含数据 */

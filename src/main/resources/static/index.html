@@ -169,7 +169,7 @@
         <span>所有股票（{{ allStockList.length }}）</span>
       </div>
     </template>
-    <el-table ref="allTable" :data="allStockList" size="small" highlight-current-row
+    <el-table ref="allTable" :data="pagedAllStockList" size="small" highlight-current-row
               height="420"
               @current-change="row => onSelect(row, 'all')"
               :row-class-name="() => 'clickable-row'">
@@ -178,6 +178,9 @@
                        :formatter="col.fmt ? fmtNum : undefined"
                        :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
     </el-table>
+    <el-pagination class="all-pager" v-model:current-page="allPage" v-model:page-size="allPageSize"
+                   :total="allStockList.length" :page-sizes="[50, 100, 200]"
+                   layout="total, sizes, prev, pager, next, jumper" background small></el-pagination>
   </el-card>
 
   <!-- 金叉 / 交易位 两个列表：列可勾选；三表选中互斥 -->

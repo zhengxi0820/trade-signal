@@ -98,6 +98,9 @@ createApp({
       allStockList: [],
       goldCrossList: [],
       tradeSignalList: [],
+      // 所有股票表分页（5534 行全量渲染会卡，el-table 无虚拟滚动，前端分页切片）
+      allPage: 1,
+      allPageSize: 100,
       loadingAll: false,
       loadingGold: false,
       loadingSignal: false,
@@ -118,6 +121,11 @@ createApp({
     },
     visibleGoldCols() {
       return this.allColumns.filter(c => this.goldCols.includes(c.prop));
+    },
+    // 所有股票表当前页切片
+    pagedAllStockList() {
+      const start = (this.allPage - 1) * this.allPageSize;
+      return this.allStockList.slice(start, start + this.allPageSize);
     },
     visibleSignalCols() {
       return this.allColumns.filter(c => this.signalCols.includes(c.prop));
@@ -356,6 +364,7 @@ createApp({
     async loadLists() {
       const q = this.buildQuery().toString();
       this.querying = true;
+      this.allPage = 1;
       this.loadingAll = this.loadingGold = this.loadingSignal = true;
       const fill = (url, key, loadingKey) =>
         getJson(url)

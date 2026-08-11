@@ -6,7 +6,7 @@
 
 - 服务器：腾讯云轻量 `43.138.158.123`（Ubuntu 22.04，4C4G），域名 `zhengxi.online` / `www.zhengxi.online`
 - 访问链路：公网 → Caddy（80/443，自动 HTTPS + 安全头 + HSTS）→ 应用 `127.0.0.1:8080` → MySQL `127.0.0.1:3306`
-- 认证：密钥弹窗 → `POST /auth/login` 换 Cookie；密钥在服务器 `/etc/trade-signal.env` 的 `TRADE_SIGNAL_ACCESS_KEY`
+- 认证：登录页（用户名+密码 / 访问密钥 / 邀请码注册）→ `POST /auth/login` 换 Cookie；密钥与邀请码在服务器 `/etc/trade-signal.env`（`TRADE_SIGNAL_ACCESS_KEY` / `TRADE_SIGNAL_INVITE_CODES`）
 
 ## 服务器布局
 
@@ -16,8 +16,8 @@
 | 凭据文件（600, root） | `/etc/trade-signal.env`（DB 账号密码 + 访问密钥） |
 | systemd 服务 | `trade-signal.service`（用户 `tradesignal`，Restart=on-failure，`java -Xmx1536m -jar`） |
 | Caddy 配置 | `/etc/caddy/Caddyfile` |
-| 备份 | `/var/backups/trade-signal/`（cron `/etc/cron.d/trade-signal-backup`，**每周一 03:47**（周六同步完成后），**只保留最新一份**；注意 cron.d 文件必须 root:root 644，否则被拒跑） |
-| 每周行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每周六 09:17** 跑 `run_daily.sh`（新浪全历史源周频同步 + work_day 刷新 + 缓存预热），日志 `/home/ops/scripts/daily.log`，预计 23~30h |
+| 每周行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每周六 09:17** 跑 `run_daily.sh`：新股检测回填 → 2 路并行分片写 `stock_quote_log`（新浪源，实测 5h42m）→ finalize（事件 rescale → 并入主表 → 对账 → 备份 → truncate）→ work_day → 周期物化 → 缓存预热。日志 `/home/ops/scripts/daily.log` |
+| 备份 | `/var/backups/trade-signal/`（**主备份在 finalize 里随同步完成即时执行**；另有 cron `/etc/cron.d/trade-signal-backup` 每周一 03:47 兜底，**只保留最新一份**；cron.d 文件必须 root:root 644，否则被拒跑） |
 | 运维账号 | `ops`（密钥登录 + sudo NOPASSWD）；root 直登已禁，密码/扫码认证已关 |
 
 ## 常用操作
@@ -37,6 +37,12 @@ ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-0.0.1-SNAPSHOT.jar /opt/t
 # 手动备份 / 恢复
 sudo /usr/local/bin/trade-signal-backup.sh
 zcat /var/backups/trade-signal/trade_signal-<日期>.sql.gz | sudo mysql trade_signal
+
+# 手动清缓存 / 手动预热（平时不需要，水位自动失效）
+KEY=$(sudo grep '^TRADE_SIGNAL_ACCESS_KEY' /etc/trade-signal.env | cut -d= -f2)
+curl -c /tmp/ck -H 'Content-Type: application/json' -d "{\"key\":\"$KEY\"}" http://127.0.0.1:8080/auth/login
+curl -b /tmp/ck -X POST http://127.0.0.1:8080/kdj/cache/refresh
+nohup /home/ops/scripts/warm_cache.sh > /home/ops/scripts/warm_cache.log 2>&1 &
 ```
 
 ## 安全口径（已落实，变更时同步本表）
@@ -56,6 +62,9 @@ zcat /var/backups/trade-signal/trade_signal-<日期>.sql.gz | sudo mysql trade_s
 
 ## 已完成里程碑
 
+- 2026-08-11 扫描进入物化表时代：周/月/季直读 `stock_period_bar` + 批量装载（200 只/批）+ **新股误回退修复**（窗口未满=全历史已在窗口内，此前次新股被误判逐股全历史重算，是月/季线 846s+ 的元凶）。实测冷算：周 1309s→35s、月 846s→10s、季 3600s+→6s，缓存命中全亚秒级
+- 2026-08-11 管线 log 中转 + 2 路并行上线：分片期主表零写入（水位只翻一次），收尾统一事件 rescale + 并入 + 值级对账 + 即时备份 + truncate；全市场同步 23~30h→**5h42m**；`aggregate/period_bar.py` 物化首启 2h39m（周 708 万/月 168 万/季 56.6 万行），对拍 0 差异；数据对齐 20260810
+- 2026-08-11 自选股上线：`user_watchlist` 表 + `/watchlist` 端点（按 token 用户名隔离）+ 行首星标 + 居中页签（全市场/我的自选）+ 代码/名称本地筛选 + 查询触发制（改条件不发请求，按钮带提示点）
 - 2026-08-10 MySQL 性能修复：`innodb_buffer_pool_size` 默认 128M → 768M（`/etc/mysql/mysql.conf.d/zz-trade-signal.cnf`）。根因实录：stock_quote 数据+索引 ~11GB，128M 缓冲池导致全市场扫描全走磁盘（冷 ~1s/股 vs 热 ~40ms/股），月/季线深历史扫描超时 3600s 的元凶
 - 2026-08-10 14 只试点股历史补齐（agent-0 双轨重灌，0 失败）：茅台/中信/包钢等 10 只从 3-5 年试点窗补到 IPO 全历史（另 4 只试点起点即 IPO 日本就完整）；两口径 1:1、对拍全部舍入级；副作用：这 14 只水位到 20260807（全市场 20260806），周六周频首跑自动对齐
 - 2026-08-10 前端性能修复：所有股票表 el-table 全量渲染 5534 行卡顿 → 前端分页（100/页）；后端接口本就毫秒级，卡顿是浏览器 DOM 渲染瓶颈

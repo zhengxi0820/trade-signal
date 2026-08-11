@@ -62,6 +62,7 @@ create table user_watchlist (
     ID bigint auto_increment primary key,
     USERNAME varchar(32) not null,
     CODE varchar(16) not null,
-    CREATED_AT varchar(19)
+    CREATED_AT varchar(19),
+    UPDATED_AT varchar(19)
 );
 create unique index uk_user_code on user_watchlist (USERNAME, CODE);

@@ -34,6 +34,10 @@ class WatchlistMapperTest {
         watchlistMapper.insert("alice", "000001", "1786000001");
         watchlistMapper.insert("bob", "600519", "1786000002");
 
+        // 插入时 UPDATED_AT 与 CREATED_AT 同值（无更新路径）
+        assertEquals("1786000000",
+                jdbc.queryForObject("select UPDATED_AT from user_watchlist where USERNAME='alice' and CODE='600519'",
+                        String.class));
         assertEquals(java.util.List.of("600519", "000001"), watchlistMapper.queryCodes("alice"));
         assertEquals(java.util.List.of("600519"), watchlistMapper.queryCodes("bob"));
         assertTrue(watchlistMapper.queryCodes("nobody").isEmpty());

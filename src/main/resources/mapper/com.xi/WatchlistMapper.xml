@@ -7,8 +7,8 @@
     </select>
 
     <insert id="insert">
-        insert into user_watchlist (USERNAME, CODE, CREATED_AT)
-        values (#{username}, #{code}, #{createdAt})
+        insert into user_watchlist (USERNAME, CODE, CREATED_AT, UPDATED_AT)
+        values (#{username}, #{code}, #{createdAt}, #{createdAt})
     </insert>
 
     <delete id="delete">

@@ -15,7 +15,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 
 - `controller/` — HTTP 端点（`/kdj/series`、`/kdj/gold-cross`、`/kdj/trade-signal`、`/kdj/all-stocks`、`/kdj/periods`、`POST /kdj/cache/refresh`、`/watchlist` 自选股增删查）
 - `service/` — 编排层：查行情 → 聚合 → 计算 → 判断 → 组装出参，不写数学逻辑；`ScanResultCache` 是三个全市场扫描接口的结果缓存
-- `handler/KDJHandler.java` — 全部核心计算（聚合、KDJ 递推、交叉点、交易位判断），**纯函数，不依赖 Spring 与数据库**。例外：全市场扫描的周/月/季线读物化表 `stock_period_bar`（scripts 周频物化，口径 = `KDJHandler.aggregate`，`KDJScanWindowCacheTest` 对拍）；单票序列与日线扫描仍走 Java 侧
+- `handler/KDJHandler.java` — 全部核心计算（聚合、KDJ 递推、交叉点、交易位判断），**纯函数，不依赖 Spring 与数据库**。例外：全市场扫描的周/月/季线读物化表 `stock_period_bar`（scripts 物化，口径 = `KDJHandler.aggregate`，`KDJScanWindowCacheTest` 对拍）；单票序列与日线扫描仍走 Java 侧
 - `orm/` — MyBatis：entity + mapper 接口；XML 在 `resources/mapper/**`
 - `model/` — param（入参）/ dto / vo（出参）/ query（查询条件）
 - `convert/` — MapStruct DTO↔VO 转换
@@ -25,7 +25,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 
 - **name/market 唯一来源是 `stock_info`**，`stock_quote` 不冗余这两列；出参 name/market 由 service 查 stock_info 填充。
 - **复权自建**：`stock_quote.ADJUST='0'` 原始行只追加；`ADJUST='1'` 前复权行由 `scripts/adjust/` 因子反推自算（factor(t)=爬取qfq÷raw 的阶梯函数，跳变点即除权日，事件存 `stock_dividend`），可重算覆盖。新除权事件只需该股历史 qfq 行乘新因子。
-- 数据源实测口径（新浪为唯一行情源、等比复权；东财行情口限流退出、仅保留公告日历；腾讯等差复权不可用）见 `docs/trade-signal-data-pipeline.md`。同步节奏：每周六 09:17 周频全量窗口同步（含新股检测回填），数据延迟至最近周五。
+- 数据源实测口径（新浪为唯一行情源、等比复权；东财行情口限流退出、仅保留公告日历；腾讯等差复权不可用）见 `docs/trade-signal-data-pipeline.md`。同步节奏：cron 每日 00:00 触发 run_daily.sh，探针判断新浪有新数据且距水位 ≥3 天才执行全量窗口同步（防新浪限流、三日一同步；含新股检测回填），非交易日/无新数据/间隔不足跳过；另有每小时物化自愈 `ensure_period_bar.sh`（与 run_daily 共用 flock）；周/月/季扫描在物化落后于请求截止周期时响应带 `X-Data-Not-Ready: 1` 头（前端提示自动补齐中）。数据延迟至最近一个已完结交易日。
 
 ## 硬性约定
 

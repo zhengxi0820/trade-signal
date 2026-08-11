@@ -35,4 +35,8 @@
         select count(*) from stock_period_bar
     </select>
 
+    <select id="queryMaxPeriodEnd" resultType="java.lang.String">
+        select max(period_end) from stock_period_bar where period_type = #{periodType}
+    </select>
+
 </mapper>

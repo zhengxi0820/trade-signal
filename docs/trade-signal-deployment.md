@@ -16,7 +16,8 @@
 | 凭据文件（600, root） | `/etc/trade-signal.env`（DB 账号密码 + 访问密钥） |
 | systemd 服务 | `trade-signal.service`（用户 `tradesignal`，Restart=on-failure，`java -Xmx1536m -jar`） |
 | Caddy 配置 | `/etc/caddy/Caddyfile` |
-| 每周行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每周六 09:17** 跑 `run_daily.sh`：新股检测回填 → 2 路并行分片写 `stock_quote_log`（新浪源，实测 5h42m）→ finalize（事件 rescale → 并入主表 → 对账 → 备份 → truncate）→ work_day → 周期物化 → 缓存预热。日志 `/home/ops/scripts/daily.log` |
+| 行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每日 00:00** 跑 `run_daily.sh`（探针判断新浪是否有新数据且距水位 ≥3 天，无/不足则跳过；有才执行：新股检测回填 → 2 路并行分片写 `stock_quote_log`（新浪源，实测 5h42m）→ finalize（事件 rescale → 并入主表 → 对账 → 备份 → truncate）→ work_day → 周期物化 → 缓存预热）。日志 `/home/ops/scripts/daily.log` |
+| 物化自愈 | cron `/etc/cron.d/trade-signal-period-bar`，**每小时 :25** 跑 `ensure_period_bar.sh`：work_day 最新已完结周期 vs 物化表 max(period_end)，落后则补跑物化；与 run_daily 共用 `.run_daily.lock`（flock -n）防并发 |
 | 备份 | `/var/backups/trade-signal/`（**主备份在 finalize 里随同步完成即时执行**；另有 cron `/etc/cron.d/trade-signal-backup` 每周一 03:47 兜底，**只保留最新一份**；cron.d 文件必须 root:root 644，否则被拒跑） |
 | 运维账号 | `ops`（密钥登录 + sudo NOPASSWD）；root 直登已禁，密码/扫码认证已关 |
 
@@ -58,10 +59,11 @@ nohup /home/ops/scripts/warm_cache.sh > /home/ops/scripts/warm_cache.log 2>&1 &
 ## 待办
 
 - [ ] 干净基线快照（腾讯云控制台手动打，部署验证完成后）
-- [ ] 前端「数据更新至 yyyymmdd」展示（周频延迟后用户需要知道数据到哪一天；用户已定：后续先做原型图）
+- [ ] 前端「数据更新至 yyyymmdd」展示（数据延迟下用户需要知道数据到哪一天；用户已定：后续先做原型图）
 
 ## 已完成里程碑
 
+- 2026-08-11 同步触发改版：cron 每周六 09:17 → 每日 00:00 + 探针（600519 最新交易日 ≤ 主表水位即跳过；另加 3 天闸门防新浪封 IP）+ 每小时物化自愈（ensure_period_bar.sh，与 run_daily 共用锁）；run_daily.sh 日志 rc 记录修复（原 `$(date)` 后取 `$?` 恒为 0，掩盖真实退出码）
 - 2026-08-11 扫描进入物化表时代：周/月/季直读 `stock_period_bar` + 批量装载（200 只/批）+ **新股误回退修复**（窗口未满=全历史已在窗口内，此前次新股被误判逐股全历史重算，是月/季线 846s+ 的元凶）。实测冷算：周 1309s→35s、月 846s→10s、季 3600s+→6s，缓存命中全亚秒级
 - 2026-08-11 管线 log 中转 + 2 路并行上线：分片期主表零写入（水位只翻一次），收尾统一事件 rescale + 并入 + 值级对账 + 即时备份 + truncate；全市场同步 23~30h→**5h42m**；`aggregate/period_bar.py` 物化首启 2h39m（周 708 万/月 168 万/季 56.6 万行），对拍 0 差异；数据对齐 20260810
 - 2026-08-11 自选股上线：`user_watchlist` 表 + `/watchlist` 端点（按 token 用户名隔离）+ 行首星标 + 居中页签（全市场/我的自选）+ 代码/名称本地筛选 + 查询触发制（改条件不发请求，按钮带提示点）

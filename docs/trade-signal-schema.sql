@@ -7,7 +7,7 @@
 --   stock_dividend ↔ scripts/adjust（因子反推生成，无对应 Java 实体）
 --   app_user       ↔ src/main/java/com/xi/orm/entity/AppUserDO.java
 --   stock_quote_log ↔ 同步中转表（结构与 stock_quote 完全一致，无 Java 实体）
---   stock_period_bar ↔ src/main/java/com/xi/orm/entity/PeriodBarDO.java（周/月/季物化聚合，scripts 周频物化）
+--   stock_period_bar ↔ src/main/java/com/xi/orm/entity/PeriodBarDO.java（周/月/季物化聚合，scripts 物化）
 -- 字段要改动时：先改本文件与 DO，再对库执行 ALTER，三者保持一致。
 --
 -- 约定：
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS app_user (
     UNIQUE KEY uk_username (USERNAME)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='注册用户';
 
--- 同步中转表：周频同步先入本表，收尾阶段一次性并入 stock_quote 后备份、TRUNCATE 本表。
+-- 同步中转表：每次同步先入本表，收尾阶段一次性并入 stock_quote 后备份、TRUNCATE 本表。
 -- 分片阶段主表零写入，水位（max TRADE_DATE）只在收尾翻一次，缓存只失效一次。
 CREATE TABLE IF NOT EXISTS stock_quote_log (
     ID          VARCHAR(64)   NOT NULL COMMENT 'ID(MD5: code+trade_date+adjust)',
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS stock_quote_log (
     UNIQUE KEY uk_code_adjust_date (CODE, ADJUST, TRADE_DATE)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='行情同步中转';
 
--- 周期K线物化表（周/月/季；日线原始行即 bar 不入表）。scripts 周频收尾阶段物化：
+-- 周期K线物化表（周/月/季；日线原始行即 bar 不入表）。scripts 收尾阶段物化：
 -- 常规周每股只 upsert 最新 1-2 个周期；有除权事件的股全周期重算覆盖；首启全量一次。
 -- PERIOD_START/END 为周期首/末真实交易日 yyyymmdd（季线出参的 yyyymm 由展示层截取）。
 CREATE TABLE IF NOT EXISTS stock_period_bar (
@@ -134,12 +134,13 @@ CREATE TABLE IF NOT EXISTS stock_period_bar (
     UNIQUE KEY uk_type_code_adjust_end (PERIOD_TYPE, CODE, ADJUST, PERIOD_END)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='周期K线物化（周/月/季）';
 
--- 用户自选股（挂在注册用户名上；密钥登录的 subject="key" 不使用）
+-- 用户自选股（挂在注册用户名上；密钥登录的 subject="key" 也可用，独立命名空间不与用户共享）
 CREATE TABLE IF NOT EXISTS user_watchlist (
     ID          BIGINT       NOT NULL AUTO_INCREMENT,
     USERNAME    VARCHAR(32)  NOT NULL COMMENT '用户名（token subject）',
     CODE        VARCHAR(16)  NOT NULL COMMENT '股票代码',
     CREATED_AT  DECIMAL(15,0) DEFAULT NULL COMMENT '创建时间(UNIX秒)',
+    UPDATED_AT  DECIMAL(15,0) DEFAULT NULL COMMENT '更新时间(UNIX秒)',
     PRIMARY KEY (ID),
     UNIQUE KEY uk_user_code (USERNAME, CODE)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户自选股';

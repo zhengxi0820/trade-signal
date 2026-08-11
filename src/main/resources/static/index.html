@@ -117,6 +117,11 @@
       <el-button type="primary" icon="Search" :loading="querying" @click="loadLists">查询<span v-if="queryDirty" class="query-dot"></span></el-button>
     </div>
 
+    <!-- 周/月/季物化未就绪提示（后端 X-Data-Not-Ready 头，物化自愈中） -->
+    <el-alert v-if="dataNotReady" type="warning" :closable="false" show-icon
+      title="周/月/季物化数据未就绪，系统正在自动补齐，稍后刷新即可看到最新周期"
+      style="margin-bottom: 10px"></el-alert>
+
     <!-- 参数面板：内嵌展开，非弹窗；默认值与后端一致 -->
     <el-collapse-transition>
       <div v-show="paramOpen" class="param-panel">

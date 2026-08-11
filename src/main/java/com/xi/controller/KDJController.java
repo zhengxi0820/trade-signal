@@ -8,6 +8,7 @@ import com.xi.model.vo.CrossStockVO;
 import com.xi.model.vo.KDJVO;
 import com.xi.model.vo.WorkDayVO;
 import com.xi.service.KDJService;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,16 +38,20 @@ public class KDJController {
      * 某周期截止周期出现金叉的股票列表，code为空=全市场
      */
     @GetMapping("/gold-cross")
-    public List<CrossStockVO> getGoldCross(KDJParam kdjParam) {
-        return kdjService.getGold(kdjParam);
+    public List<CrossStockVO> getGoldCross(KDJParam kdjParam, HttpServletResponse response) {
+        List<CrossStockVO> list = kdjService.getGold(kdjParam);
+        markNotReady(kdjParam, response);
+        return list;
     }
 
     /**
      * 某周期截止周期出现交易位的股票列表，code为空=全市场
      */
     @GetMapping("/trade-signal")
-    public List<CrossStockVO> getTradeSignal(KDJParam kdjParam) {
-        return kdjService.getTradeSignalStockList(kdjParam);
+    public List<CrossStockVO> getTradeSignal(KDJParam kdjParam, HttpServletResponse response) {
+        List<CrossStockVO> list = kdjService.getTradeSignalStockList(kdjParam);
+        markNotReady(kdjParam, response);
+        return list;
     }
 
     /**
@@ -61,8 +66,17 @@ public class KDJController {
      * 全部股票的截止周期行情与 KDJ（不过滤），供「所有股票」列表，code为空=全市场
      */
     @GetMapping("/all-stocks")
-    public List<CrossStockVO> getAllStocks(KDJParam kdjParam) {
-        return kdjService.getAllStocks(kdjParam);
+    public List<CrossStockVO> getAllStocks(KDJParam kdjParam, HttpServletResponse response) {
+        List<CrossStockVO> list = kdjService.getAllStocks(kdjParam);
+        markNotReady(kdjParam, response);
+        return list;
+    }
+
+    /** 周/月/季物化落后于请求截止周期时打未就绪头（前端提示自动补齐中） */
+    private void markNotReady(KDJParam kdjParam, HttpServletResponse response) {
+        if (!kdjService.isScanDataReady(kdjParam)) {
+            response.setHeader("X-Data-Not-Ready", "1");
+        }
     }
 
     /**

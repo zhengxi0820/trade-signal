@@ -25,4 +25,10 @@ public interface PeriodBarMapper {
      * 物化表是否已启用（行数；首次物化前为 0，扫描走 stock_quote 现场聚合兜底）
      */
     long countAll();
+
+    /**
+     * 某周期物化表最新周期末（yyyymmdd）；表空返回 null。
+     * 供扫描数据就绪标记（X-Data-Not-Ready）使用。
+     */
+    String queryMaxPeriodEnd(@Param("periodType") String periodType);
 }

@@ -31,15 +31,16 @@ function fmt2(v) {
 // 任一接口返回 401 时回调（由 app 注册）：弹出密钥遮罩
 let onUnauthorized = null;
 
-async function getJson(url) {
-  const resp = await fetch(url);
-  if (resp.status === 401) {
-    if (onUnauthorized) onUnauthorized();
-    throw new Error('未认证或会话已过期');
+async function getJson(url, onHeaders) {
+    const resp = await fetch(url);
+    if (resp.status === 401) {
+      if (onUnauthorized) onUnauthorized();
+      throw new Error('未认证或会话已过期');
+    }
+    if (!resp.ok) throw new Error(url + ' → HTTP ' + resp.status);
+    if (onHeaders) onHeaders(resp.headers);
+    return resp.json();
   }
-  if (!resp.ok) throw new Error(url + ' → HTTP ' + resp.status);
-  return resp.json();
-}
 
 createApp({
   data() {
@@ -60,6 +61,8 @@ createApp({
       page: 'all',
       favs: [],
       searchKw: '',
+      // 周/月/季物化未就绪标记（后端 X-Data-Not-Ready 头）
+      dataNotReady: false,
       // 有未应用的查询条件修改（点「查询」才发请求）
       queryDirty: false,
 
@@ -424,8 +427,8 @@ createApp({
       this.allPage = 1;
       this.loadingAll = this.loadingGold = this.loadingSignal = true;
       const fill = (url, key, loadingKey) =>
-        getJson(url)
-          .then(list => { this[key] = list; })
+        getJson(url, h => { this.dataNotReady = h.get('x-data-not-ready') === '1'; })
+            .then(list => { this[key] = list; })
           .catch(e => {
             this[key] = [];
             ElementPlus.ElMessage.error(url.split('?')[0] + ' 查询失败：' + e.message);

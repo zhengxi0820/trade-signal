@@ -52,6 +52,13 @@ public interface KDJService {
     List<WorkDayVO> getPeriods(WorkDayParam param);
 
     /**
+     * 周/月/季扫描数据是否就绪：请求截止周期是否已被物化表覆盖。
+     * 未就绪时 controller 在响应头打 X-Data-Not-Ready: 1（前端提示物化自愈中）。
+     * 日线恒就绪（直读 stock_quote）。
+     */
+    boolean isScanDataReady(KDJParam kdjParam);
+
+    /**
      * 清空全市场扫描结果缓存（运维兜底；日常失效靠数据水位自动完成）
      *
      * @return 清掉的缓存条数

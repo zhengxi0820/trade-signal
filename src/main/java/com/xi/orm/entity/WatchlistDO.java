@@ -24,4 +24,9 @@ public class WatchlistDO {
     private String code;
 
     private String createdAt;
+
+    /**
+     * 更新时间
+     */
+    private String updatedAt;
 }

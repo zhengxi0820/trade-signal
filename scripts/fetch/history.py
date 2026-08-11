@@ -63,12 +63,19 @@ def fetch_hist_sina(code: str, adjust: str, start: date, end: date) -> list:
         d = str(r["date"])[:10]
         if not (s <= d <= e):
             continue
+        o, h, l, c = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
+        # 零价/非法行过滤（2026-08-11 北交所 920 段 185 行停牌占位伪行事故）：
+        # 新浪 raw 序列对停牌日输出 OHLC=0 占位行而 qfq 省略，落入库会导致两口径失配。
+        # 真实行情 OHLC 必全 > 0；这里过滤可同时保护下游 factor 计算（避免除零）。
+        if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+            print(f"  [fetch] {code} {d} 零价/非法行跳过 o={o} h={h} l={l} c={c}", flush=True)
+            continue
         rows.append({
             "trade_date": d.replace("-", ""),
-            "open": float(r["open"]),
-            "high": float(r["high"]),
-            "low": float(r["low"]),
-            "close": float(r["close"]),
+            "open": o,
+            "high": h,
+            "low": l,
+            "close": c,
             "volume": int(r["volume"]),
         })
     rows.sort(key=lambda x: x["trade_date"])
@@ -90,12 +97,17 @@ def fetch_hist_em(code: str, adjust: str, start: date, end: date) -> list:
     rows = []
     for _, r in df.iterrows():
         d = r["日期"]
+        o, h, l, c = float(r["开盘"]), float(r["最高"]), float(r["最低"]), float(r["收盘"])
+        # 与新浪同口径的零价/非法行过滤（见 fetch_hist_sina 注释）
+        if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+            print(f"  [fetch] {code} {d} 零价/非法行跳过 o={o} h={h} l={l} c={c}", flush=True)
+            continue
         rows.append({
             "trade_date": d.strftime("%Y%m%d") if hasattr(d, "strftime") else str(d).replace("-", ""),
-            "open": float(r["开盘"]),
-            "high": float(r["最高"]),
-            "low": float(r["最低"]),
-            "close": float(r["收盘"]),
+            "open": o,
+            "high": h,
+            "low": l,
+            "close": c,
             "volume": int(r["成交量"]) * 100,
         })
     rows.sort(key=lambda x: x["trade_date"])
@@ -140,6 +152,18 @@ def upsert_quote_rows(conn, code: str, rows: list, adjust: str, table: str = "st
     table：周频分片阶段写 stock_quote_log（中转表），收尾并入 stock_quote；手工单股调试可直接写主表。
     """
     assert table in ("stock_quote", "stock_quote_log"), f"非法目标表: {table}"
+    # 写库总闸门：零价/非法行一律不落（fetch 层已过滤，这里兜底防任何路径漏网）。
+    # 停牌占位行（OHLC=0）曾导致 raw/qfq 两口径失配并污染物化 bar（2026-08-11 清理记录）。
+    valid = []
+    for r in rows:
+        if r["open"] <= 0 or r["high"] <= 0 or r["low"] <= 0 or r["close"] <= 0:
+            print(f"[upsert] {code} {r['trade_date']} adjust={adjust} 零价/非法行已过滤 "
+                  f"o={r['open']} h={r['high']} l={r['low']} c={r['close']}", flush=True)
+            continue
+        valid.append(r)
+    rows = valid
+    if not rows:
+        return 0
     from common.db import quote_id, unix_ts
     now = unix_ts()
     sql = f"""

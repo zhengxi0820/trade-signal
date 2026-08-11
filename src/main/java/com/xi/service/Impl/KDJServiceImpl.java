@@ -35,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -98,6 +99,11 @@ public class KDJServiceImpl implements KDJService {
 
     private final KDJHandler kdjHandler = new KDJHandler();
 
+    /** 周期物化就绪标记用的短缓存（60s）：type -> [maxPeriodEnd | 最新已完结周期key, 时间戳] */
+    private static final long READY_CACHE_TTL_MS = 60_000;
+    private final Map<String, String[]> periodBarMaxCache = new ConcurrentHashMap<>();
+    private final Map<String, String[]> latestPeriodEndCache = new ConcurrentHashMap<>();
+
     @Override
     public List<KDJDTO> getAllKDJ(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
@@ -153,6 +159,93 @@ public class KDJServiceImpl implements KDJService {
             result.add(vo);
         }
         return result;
+    }
+
+    @Override
+    public boolean isScanDataReady(KDJParam kdjParam) {
+        fillCommonDefaults(kdjParam);
+        String type = kdjParam.getKdjType();
+        // 日线直读 stock_quote，无物化依赖，恒就绪
+        if ("0".equals(type)) {
+            return true;
+        }
+        String maxEnd = periodBarMaxEnd(type);
+        if (maxEnd == null) {
+            // 物化表为空（首启前）→ 未就绪（扫描此时走现场聚合兜底）
+            return false;
+        }
+        String requested = requestedPeriodEndKey(kdjParam);
+        if (requested == null) {
+            return true;
+        }
+        return requested.compareTo(periodKey(maxEnd, type)) <= 0;
+    }
+
+    /** 物化表该周期最新周期末（短缓存 60s；表空返回 null） */
+    private String periodBarMaxEnd(String kdjType) {
+        long now = System.currentTimeMillis();
+        String[] cached = periodBarMaxCache.get(kdjType);
+        if (cached != null && now - Long.parseLong(cached[1]) < READY_CACHE_TTL_MS) {
+            return cached[0];
+        }
+        String max = periodBarMapper.queryMaxPeriodEnd(kdjType);
+        periodBarMaxCache.put(kdjType, new String[]{max, String.valueOf(now)});
+        return max;
+    }
+
+    /** 请求的有效截止周期 key：周=周末 yyyymmdd；月=yyyymm；季=季末月 yyyymm */
+    private String requestedPeriodEndKey(KDJParam p) {
+        switch (p.getKdjType()) {
+            case "1":
+                if (StringUtils.hasText(p.getTradeDateMax())) {
+                    return p.getTradeDateMax();
+                }
+                break;
+            case "2":
+                if (StringUtils.hasText(p.getTradeDate())) {
+                    return p.getTradeDate().substring(0, 6);
+                }
+                break;
+            case "3":
+                if (StringUtils.hasText(p.getTradeDateMax())) {
+                    return p.getTradeDateMax();
+                }
+                break;
+            default:
+                return null;
+        }
+        return latestCompletedEndKey(p.getKdjType());
+    }
+
+    /** 周期末 → 比较 key：周直接比 yyyymmdd，月/季比 yyyymm（季度末月单调可序） */
+    private static String periodKey(String periodEnd, String kdjType) {
+        return "1".equals(kdjType) ? periodEnd : periodEnd.substring(0, 6);
+    }
+
+    /** 最新已完结周期末 key（基于 work_day，与 /kdj/periods 同口径；短缓存 60s） */
+    private String latestCompletedEndKey(String kdjType) {
+        long now = System.currentTimeMillis();
+        String[] cached = latestPeriodEndCache.get(kdjType);
+        if (cached != null && now - Long.parseLong(cached[1]) < READY_CACHE_TTL_MS) {
+            return cached[0];
+        }
+        List<String> tradeDates = workDayMapper.queryAll(new WorkDayQuery()).stream()
+                .map(WorkDayDO::getTradeDate)
+                .toList();
+        List<KDJHandler.PeriodBar> bars = kdjHandler.aggregateDates(tradeDates, kdjType, LocalDate.now());
+        String key = null;
+        if (!bars.isEmpty()) {
+            String end = bars.get(bars.size() - 1).endDate;
+            key = "1".equals(kdjType) ? end : end.substring(0, 6);
+        }
+        latestPeriodEndCache.put(kdjType, new String[]{key, String.valueOf(now)});
+        return key;
+    }
+
+    /** 测试用：清空就绪标记短缓存（生产由 60s TTL 自动过期） */
+    public void resetReadyCaches() {
+        periodBarMaxCache.clear();
+        latestPeriodEndCache.clear();
     }
 
     @Override

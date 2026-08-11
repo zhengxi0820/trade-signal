@@ -1,7 +1,7 @@
 # 交接手册 — trade-signal（新 agent / 新人入场第一课）
 
 > 读完这份再动手。权威细节在各专项文档（见文末指针），本手册负责让你 10 分钟内知道系统长什么样、现在是什么状态、坑在哪。
-> 最近更新：2026-08-11（物化表 + 自选股 + 管线中转并行上线后）。
+> 最近更新：2026-08-11（物化表 + 自选股 + 管线中转并行、三日一同步 + 物化自愈 + X-Data-Not-Ready 标记、北交所零价伪行清理）。
 
 ## 1. 这是什么
 
@@ -14,7 +14,7 @@ KDJ 交易位信号系统。A 股全市场（5534 只，沪深北）的日/周/�
 ```
 公网 → Caddy(443, HTTPS+CSP) → 应用(127.0.0.1:8080, systemd trade-signal) → MySQL(127.0.0.1)
                                      ↑ 只读
-新浪行情 ─→ scripts(每周六 09:17 cron) ─→ 写 stock_quote_log → finalize 并入主表
+新浪行情 ─→ scripts(每日 00:00 cron + 探针 + 3 天闸门) ─→ 写 stock_quote_log → finalize 并入主表
 东财公告日历 ─（除权事件双轨判定）──────────┘              → 物化 stock_period_bar → 预热缓存
 ```
 
@@ -23,13 +23,13 @@ KDJ 交易位信号系统。A 股全市场（5534 只，沪深北）的日/周/�
 ## 3. 性能体系（前阵子慢的根源都在这解决了）
 
 - **两层内存缓存**：结果缓存（接口+全参数为 key，命中毫秒级）→ bars 缓存（132 根窗口，key=code|adjust|kdjType，调参只重递推不取数）。均以 `max(trade_date)` 为水位自动失效，`POST /kdj/cache/refresh` 手动清。
-- **物化表**：周/月/季 bars 由 scripts 周频物化，扫描直读（冷算：周 35s/月 10s/季 6s）；日线批量窗口读原始行（行即 bar）。
+- **物化表**：周/月/季 bars 由 scripts 物化，扫描直读（冷算：周 35s/月 10s/季 6s）；日线批量窗口读原始行（行即 bar）。
 - **扫描批量装载**：每 200 只一条 SQL 按索引顺序读（单股随机 IO 是云盘大坑，600ms/股的窗口函数写法已禁用，用自连接取首尾价）。
 - 实测对比见 `docs/trade-signal-deployment.md` 里程碑 2026-08-11。
 
-## 4. 数据管线（每周六 09:17，run_daily.sh）
+## 4. 数据管线（每日 00:00 探针触发 + 3 天闸门，run_daily.sh；每小时物化自愈）
 
-flock 防重叠 → 新股检测（巨潮名单 vs stock_info，新股全历史双轨回填后登记）→ 2 路并行分片写 `stock_quote_log`（新浪唯一行情源，~6h）→ finalize（除权事件统一 rescale → 并入主表 → 逐行对账 → 备份 → truncate）→ work_day → 物化（常规周增量，除权股全删全插）→ 预热缓存。数据新鲜度 = 最近周五。
+flock 防重叠 → 探针（600519 最新交易日 ≤ 主表水位、或距水位 <3 天则跳过本轮，防新浪封 IP）→ 新股检测（巨潮名单 vs stock_info，新股全历史双轨回填后登记）→ 2 路并行分片写 `stock_quote_log`（新浪唯一行情源，~6h）→ finalize（除权事件统一 rescale → 并入主表 → 逐行对账 → 备份 → truncate）→ work_day → 物化（常规周增量，除权股全删全插）→ 预热缓存。另有每小时 `ensure_period_bar.sh` 物化自愈（物化失败缺口 ≤1 小时补齐，与 run_daily 共用锁）。数据新鲜度 = 最近一个已完结交易日。
 
 复权是自建体系（因子反推 + 东财公告日历双轨），**别绕过它直接写 qfq 数据**；口径权威在 `docs/trade-signal-data-pipeline.md`。
 
@@ -77,7 +77,7 @@ ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-*.jar /opt/trade-signal/a
 | `docs/kdj-trade-signal-requirements.md` | 业务规则（信号六条件、勘误） |
 | `docs/trade-signal-api.md` | 接口参数/出参/认证 |
 | `docs/trade-signal-schema.sql` | 表结构（改表先改它） |
-| `docs/trade-signal-data-pipeline.md` | 管线口径（双轨、五道闸、周频流程、验证记录） |
+| `docs/trade-signal-data-pipeline.md` | 管线口径（双轨、五道闸、探针触发流程、验证记录） |
 | `docs/trade-signal-deployment.md` | 运维（发版/备份/里程碑） |
 | `docs/SECURITY.md` | 安全基线（上线检查单 3.1） |
 | `scripts/README.md` | 管线命令用法 |

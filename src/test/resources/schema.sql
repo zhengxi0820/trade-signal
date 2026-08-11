@@ -44,3 +44,24 @@ create table app_user (
     UPDATED_AT varchar(19)
 );
 create unique index uk_username on app_user (USERNAME);
+
+create table stock_period_bar (
+    ID bigint auto_increment primary key,
+    PERIOD_TYPE char(1) not null,
+    CODE varchar(16) not null,
+    ADJUST varchar(1) not null,
+    PERIOD_START varchar(8) not null,
+    PERIOD_END varchar(8) not null,
+    OPEN decimal(12,4), HIGH decimal(12,4), LOW decimal(12,4), CLOSE decimal(12,4),
+    CREATED_AT varchar(19),
+    UPDATED_AT varchar(19)
+);
+create unique index uk_type_code_adjust_end on stock_period_bar (PERIOD_TYPE, CODE, ADJUST, PERIOD_END);
+
+create table user_watchlist (
+    ID bigint auto_increment primary key,
+    USERNAME varchar(32) not null,
+    CODE varchar(16) not null,
+    CREATED_AT varchar(19)
+);
+create unique index uk_user_code on user_watchlist (USERNAME, CODE);

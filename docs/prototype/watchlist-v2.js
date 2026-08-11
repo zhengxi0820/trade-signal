@@ -1,3 +1,61 @@
+// ==================== 原型 mock（throwaway，勿进生产）====================
+// 拦截 fetch，返回模拟数据：自选股+筛选原型专用，不连后端。
+(function () {
+  const NAMES = ['贵州茅台','平安银行','宁德时代','中信证券','万科A','辽港股份','中芯国际','海航控股','中兴通讯','比亚迪',
+    '招商银行','五粮液','中国平安','长江电力','格力电器','隆基绿能','恒瑞医药','京东方A','中国联通','紫金矿业',
+    '工商银行','美的集团','海天味业','泸州老窖','伊利股份','牧原股份','立讯精密','歌尔股份','三一重工','中国建筑'];
+  const rnd = (() => { let i = 0; const vals = [0.13,0.57,0.82,0.31,0.94,0.46,0.68,0.25,0.71,0.39,0.88,0.05,0.63,0.77,0.21,0.52]; return () => vals[i++ % vals.length]; })();
+  const ALL = [];
+  for (let i = 0; i < 60; i++) {
+    const code = String(600000 + i * 137 % 70000).padStart(6, '0');
+    const close = +(5 + rnd() * 200).toFixed(2);
+    ALL.push({
+      code, name: NAMES[i % NAMES.length] + (i >= NAMES.length ? String.fromCharCode(65 + i / NAMES.length) : ''),
+      market: code[0] === '6' ? 'SH' : 'SZ',
+      open: close * 0.99, high: close * 1.02, low: close * 0.97, close,
+      k: 20 + rnd() * 60, d: 20 + rnd() * 60, j: 10 + rnd() * 70,
+      crossValue: i % 3 === 0 ? +(20 + rnd() * 30).toFixed(2) : null,
+      tradeDate: '20260807'
+    });
+  }
+  const GOLD = ALL.filter((_, i) => i % 3 === 0);
+  const SIGNAL = ALL.filter((_, i) => i % 7 === 0);
+  function periods(t) {
+    const out = [];
+    if (t === '0') { for (let i = 0; i < 250; i++) out.push({ tradeDate: String(20260807 - i).replace(/-/g, '') }); }
+    else if (t === '1') { for (let i = 0; i < 120; i++) out.push({ tradeDateMin: String(20260101 + i * 7), tradeDateMax: String(20260105 + i * 7) }); }
+    else if (t === '2') { for (let y = 2022; y <= 2026; y++) for (let m = 1; m <= 12; m++) out.push({ tradeDate: y + String(m).padStart(2, '0') + '28' }); }
+    else { for (let y = 2020; y <= 2026; y++) for (const q of [['01','03'],['04','06'],['07','09'],['10','12']]) out.push({ tradeDateMin: y + q[0], tradeDateMax: y + q[1] }); }
+    return out.reverse();
+  }
+  function series() {
+    const rows = [];
+    let c = 50, k = 50, d = 50;
+    for (let i = 0; i < 130; i++) {
+      c = Math.max(5, c + (rnd() - 0.5) * 6);
+      const rsv = rnd() * 100;
+      k = (k * 2 + rsv) / 3; d = (d * 2 + k) / 3;
+      rows.push({ open: c * 0.99, high: c * 1.03, low: c * 0.96, close: c,
+        k, d, j: 3 * k - 2 * d,
+        crossType: rnd() > 0.9 ? (rnd() > 0.5 ? 'gold' : 'death') : null,
+        crossValue: rnd() > 0.9 ? 30 + rnd() * 30 : null,
+        tradeDate: '2026' + String(3 + Math.floor(i / 22)).padStart(2, '0') + String(1 + i % 22).padStart(2, '0') });
+    }
+    return rows;
+  }
+  const ok = data => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(data) });
+  window.fetch = function (url) {
+    if (url.startsWith('/auth/check')) return Promise.resolve({ ok: true, status: 204 });
+    if (url.startsWith('/kdj/periods')) return ok(periods(new URLSearchParams(url.split('?')[1]).get('kdjType') || '0'));
+    if (url.startsWith('/kdj/gold-cross')) return ok(GOLD);
+    if (url.startsWith('/kdj/trade-signal')) return ok(SIGNAL);
+    if (url.startsWith('/kdj/series')) return ok(series());
+    if (url.startsWith('/kdj/all-stocks')) return ok(ALL);
+    return ok([]);
+  };
+})();
+// ==================== mock 结束 ====================
+
 const { createApp } = Vue;
 
 // 图表默认一屏展示的周期数
@@ -56,12 +114,14 @@ createApp({
       // 提示条：3 秒自动消失
       toast: { text: '', type: 'error' },
 
-      // 页签（全市场/我的自选）+ 自选集合（服务端按用户存储）+ 筛选关键字
-      page: 'all',
-      favs: [],
-      searchKw: '',
-      // 有未应用的查询条件修改（点「查询」才发请求）
+      // 【原型新增】有未应用的查询条件修改（点「查询」才发请求）
       queryDirty: false,
+      // 【原型新增】工具栏变体（D1/D2/D3 原型切换用）
+      tbVariant: new URLSearchParams(location.search).get('variant') || 'D1',
+      // 【原型新增】页签（全市场/我的自选）+ 自选集合 + 筛选关键字
+      page: 'all',
+      favs: ['601880', '000001'],
+      searchKw: '',
 
       kdjType: '0',
 
@@ -129,7 +189,7 @@ createApp({
     visibleGoldCols() {
       return this.allColumns.filter(c => this.goldCols.includes(c.prop));
     },
-    // 页签 + 筛选后的三个列表视图
+    // 【原型新增】页签 + 筛选后的三个列表视图
     viewAllStockList() { return this._favFilter(this.allStockList); },
     viewGoldCrossList() { return this._favFilter(this.goldCrossList); },
     viewTradeSignalList() { return this._favFilter(this.tradeSignalList); },
@@ -170,8 +230,7 @@ createApp({
       // 切换周期类型时先清空旧周期数据：新数据返回前选择器渲染空态，
       // 避免旧结构的 periods（如日线数据缺 tradeDateMin）喂给季线选择器产生 NaN 选项
       this.periods = [];
-      // 查询触发制：只刷新选择器，列表等用户点「查询」
-      this.queryDirty = true;
+      this.queryDirty = true;   // 【原型】不立即发请求，等用户点查询
       this.initPeriods(true);
     },
     dailyDate() { if (!this._suppressDirty) this.queryDirty = true; },
@@ -190,6 +249,8 @@ createApp({
   created() {
     // 任一业务接口 401 → 回到密钥遮罩
     onUnauthorized = () => { this.authed = false; };
+    // 原型：工具栏变体切换钩子
+    window.__tbVueApply = v => { this.tbVariant = v; };
   },
   async mounted() {
     // 进门检查：已认证直接初始化，未认证停在遮罩
@@ -295,10 +356,9 @@ createApp({
       this.loginForm = { username: '', password: '' };
       this.registerForm = { username: '', password: '', inviteCode: '' };
       this.initPeriods();
-      this.loadFavs();
     },
 
-    // ---- 自选股（服务端按用户存储，GET/POST /watchlist）----
+    // 【原型新增】自选股星标 + 页签切换 + 视图过滤
     _favFilter(list) {
       let r = this.page === 'fav' ? list.filter(s => this.favs.includes(s.code)) : list;
       const kw = this.searchKw.trim();
@@ -306,32 +366,11 @@ createApp({
       return r;
     },
     isFav(code) { return this.favs.includes(code); },
-    switchPage(p) { this.page = p; this.allPage = 1; },
-    async loadFavs() {
-      try {
-        this.favs = await getJson('/watchlist');
-      } catch (e) {
-        this.favs = [];
-      }
-    },
-    async toggleFav(code) {
-      // 乐观更新，失败回滚
+    toggleFav(code) {
       const i = this.favs.indexOf(code);
-      const adding = i < 0;
-      if (adding) this.favs.push(code); else this.favs.splice(i, 1);
-      try {
-        const resp = await fetch(adding ? '/watchlist' : '/watchlist/remove', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code })
-        });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      } catch (e) {
-        const j = this.favs.indexOf(code);
-        if (adding) { if (j >= 0) this.favs.splice(j, 1); } else if (j < 0) { this.favs.push(code); }
-        ElementPlus.ElMessage.error('自选操作失败：' + e.message);
-      }
+      if (i >= 0) this.favs.splice(i, 1); else this.favs.push(code);
     },
+    switchPage(p) { this.page = p; this.allPage = 1; },
 
     // ---- 周期选择器 ----
     async initPeriods(noQuery) {

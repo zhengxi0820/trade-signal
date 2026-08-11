@@ -65,16 +65,23 @@ def rescale_history_qfq(conn, code: str, k: float) -> int:
 
 
 def apply_daily(conn, code: str, raw_today: dict, qfq_today: dict, upsert_quote_fn,
-                future_factors: list = None) -> dict:
+                future_factors: list = None, stage: list = None,
+                factor_prev_override: float = None) -> dict:
     """单日增量主流程。raw_today/qfq_today 为单行 dict（同 fetch_hist 行结构）。
 
-    future_factors：该日之后的逐日 factor（daily 回看窗口内），用于持续性后验；
+    future_factors：该日之后的逐日 factor（回看窗口内），用于持续性后验；
     不传则只做方向过滤（闸⑤关闭，不推荐）。
+    stage：分片模式传入 list 时，确认的事件**只暂存不进库**（不写 stock_dividend、
+    不 rescale 主表），收尾阶段统一执行；暂存元素
+    {code, ex_date, k, new_level, rel_change}。
+    factor_prev_override：分片模式下主表全程不变，平台因子由调用方在内存里跟踪
+    （初值=主表最新平台因子；事件确认后=该事件 new_level），避免重复查库。
     返回 {'event': bool, 'k': float|None, 'deferred': bool}；
     deferred=True 表示候选事件证据不足延期判定，当日行未落库（下次重评）。
     """
     factor_today = qfq_today["close"] / raw_today["close"]
-    factor_prev = latest_stored_factor(conn, code)
+    factor_prev = factor_prev_override if factor_prev_override is not None \
+        else latest_stored_factor(conn, code)
 
     event = None
     if factor_prev is not None:
@@ -95,6 +102,12 @@ def apply_daily(conn, code: str, raw_today: dict, qfq_today: dict, upsert_quote_
                     threshold = factor_prev + PERSIST_RATIO * (factor_today - factor_prev)
                     if statistics.median(future_factors[:PERSIST_WINDOW]) < threshold:
                         pass  # 振荡回弹 → 非事件，按无变化落库
+                    elif stage is not None:
+                        # 分片暂存：只记录，收尾统一 upsert_dividends + rescale
+                        k = factor_prev / factor_today
+                        stage.append({"code": code, "ex_date": raw_today["trade_date"],
+                                      "k": k, "new_level": factor_today, "rel_change": rel})
+                        event = DividendEvent(ex_date=raw_today["trade_date"], k=k, rel_change=rel)
                     else:
                         event = _apply_event(conn, code, raw_today, factor_prev, factor_today, rel)
                 else:

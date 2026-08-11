@@ -10,16 +10,18 @@
 akshare（三源）──► scripts/fetch（取数）──► scripts/adjust（因子反推复权）──► trade_signal 库 ──► Java 只读
 ```
 
-写入的四张表：
+写入的六张表：
 
 | 表 | 内容 | 写入方式 |
 |---|---|---|
-| `stock_info` | 股票基础信息（name/market 唯一来源、board_type 板块枚举） | 全量灌入，akshare 名单接口 |
-| `stock_quote` | 日线 OHLCV：`ADJUST='0'` 原始行 + `ADJUST='1'` 自算前复权行 | 原始行只追加；qfq 行可重算覆盖 |
-| `stock_dividend` | 除权除息事件（EX_DATE + 综合因子 k + SOURCE） | 双轨生成：公告日历=权威日历，因子反推=测 k+校验+兜底，只追加 |
+| `stock_info` | 股票基础信息（name/market 唯一来源、board_type 板块枚举） | 全量灌入 + 周频新股维护，akshare 名单接口 |
+| `stock_quote` | 日线 OHLCV：`ADJUST='0'` 原始行 + `ADJUST='1'` 自算前复权行 | 原始行只追加；qfq 行可重算覆盖；周频只在收尾阶段由 log 表并入 |
+| `stock_quote_log` | 同步中转表（结构与 stock_quote 完全一致） | 周频分片阶段唯一写入目标；收尾并入主表、对账、备份后 TRUNCATE |
+| `stock_dividend` | 除权除息事件（EX_DATE + 综合因子 k + SOURCE） | 双轨生成：公告日历=权威日历，因子反推=测 k+校验+兜底；周频分片阶段只暂存，收尾统一追加 |
 | `work_day` | 交易日历（`/kdj/periods` 来源） | 从 stock_quote distinct TRADE_DATE 生成 |
+| `stock_period_bar` | 周/月/季物化聚合（PERIOD_TYPE 1/2/3，OHLC） | scripts 周频收尾物化：常规周每股最新 1-2 个已完结周期；除权股全周期重算；首启 `--full` 全量 |
 
-ID 规则：`stock_quote`=MD5(code:yyyymmdd:adjust)、`stock_dividend`=MD5(code:ex_date)、`work_day`=MD5(market:trade_date)；时间戳一律 UNIX 秒（DECIMAL(15,0)）。
+ID 规则：`stock_quote`/`stock_quote_log`=MD5(code:yyyymmdd:adjust)、`stock_dividend`=MD5(code:ex_date)、`work_day`=MD5(market:trade_date)、`stock_period_bar`=自增（幂等靠唯一键 PERIOD_TYPE+CODE+ADJUST+PERIOD_END）；时间戳一律 UNIX 秒（DECIMAL(15,0)）。
 
 ## 2. 数据源实测口径（2026-08，本机实测）
 
@@ -60,15 +62,25 @@ ID 规则：`stock_quote`=MD5(code:yyyymmdd:adjust)、`stock_dividend`=MD5(code:
 
 爬 none 全历史落库 → 爬 qfq 全历史（原料）→ 抓东财公告日历（分红+配股）→ 逐日 factor → 五道闸识别候选 → 双轨合并写 stock_dividend → 自算 qfq 落库 → 全序列对拍（自适应容差）。保险：合并后事件数 > 市龄×3 → 中止该股、不写事件/qfq 行、标记人工复核（full_backfill_review.txt）。
 
-### 3.2 增量流程（生产口径：**周频**，2026-08-08 起每周六 09:17）
+### 3.2 增量流程（生产口径：**周频 + log 表中转 + 2 路并行**，2026-08-10 起）
 
-爬近 10 日窗口两口径 → 取库中尚无的交易日 → factor_当日 vs 库存最新 factor → 过与历史回填同款的闸①~④（相对/金额/幅度下限/方向）→ 无变化直接落库；候选事件再过闸⑤持续性后验（用 10 天回看窗口内该日之后的逐日 factor；后续不足 5 日则**延期判定**，当日行不落库、下次窗口前移后重评）→ 确认事件则 k=旧÷新 → stock_dividend 追加 → 该股历史 qfq 行 ×= k → 当日行落库。
+**分片阶段**（run_daily.sh 并行起 `--shard 0/2`、`--shard 1/2` 两个进程，各占独立 DB 连接）：
+每股爬 10 日回看窗口两口径（新浪）→ 取主表尚无的交易日 → 过与历史回填同款的闸①~④ → 无变化直接落 **stock_quote_log 中转表**；候选事件过闸⑤持续性后验（回看窗口内后续不足 5 日则**延期判定**，当日行不写、下周重评）→ 确认的事件**只暂存**到 `.event_stage_shard{i}.jsonl`（分片阶段主表 stock_quote/stock_dividend **零写入**，水位不翻、应用缓存不失效）。分片模式限流每线程 3s（2 路等效 1.5s）。
 
-**周频口径（用户拍板，"东财熔断器+盘中行过滤"方案作废）**：行情源统一新浪、**接受一周延迟**、每周六同步本周未爬数据。原因：新浪无视日期参数每次返回全历史（~15-20s/股），日频全量需 20+h 不可行；东财行情口曾支持小窗口（~3-6s/股）但服务器限流实录不可用。全量 `--all`（5535 只）周跑预计 **23~30h**（周六 09:17 起跑、周日傍晚前完），幂等 + flock 防重叠，漏跑下周自然补齐。
+**收尾阶段**（两路完成后 `--finalize` 调一次）：
+1. 除权事件统一执行：读暂存文件 → stock_dividend 追加 + 主表 qfq 历史行 ×= k（此时主表全是本轮之前的数据，rescale 语义与旧实时路径一致）
+2. `INSERT INTO stock_quote SELECT FROM stock_quote_log ON DUPLICATE KEY UPDATE`（幂等）
+3. 对账：log 每行须与主表关键值全等，不符 → 报警退出、**不备份不 truncate**（保现场）
+4. `/usr/local/bin/trade-signal-backup.sh` 即时备份（mysqldump，需 sudo；失败同样不 truncate）
+5. TRUNCATE stock_quote_log + 清理暂存文件
 
-**新股维护（2026-08-10 接入，`fetch.new_stocks`，跑在 --all 之前）**：交易所名单刷新 vs stock_info 检新增（另有"已登记但零行情"自愈分支）→ 新增股逐只走 fetch.history 全历史双轨回填（years=40，新浪自然截到上市首日）→ **先回填后登记 stock_info**（中断则下周自愈重跑，幂等）。无新增时 0 成本通过；新股通常每周 0~3 只。新浪不支持的代码（如 689009 九号公司 CDR，689 段）进 `SKIP_CODES` 永久排除，不重复试错。新股当周即被随后的 `--all` 增量衔接。
+**周期物化**（`aggregate.period_bar`，finalize 之后）：从 stock_quote 聚合周/月/季 bars 写 stock_period_bar，口径与 Java KDJHandler.aggregate 一致（周=ISO 周周一起、月/季=自然周期；OPEN=首交易日开盘、CLOSE=末交易日收盘、HIGH/LOW=极值、PERIOD_START/END=首末真实交易日；**未完结周期不入表**——含全库最新交易日的周期永远跳过，下周自然补物化）。常规周：每股只 upsert 最近窗口（周 21 天/月 62 天/季 200 天，覆盖最新 1-2 个已完结周期）；近 10 天有除权事件的股（历史 qfq 被 rescale 过）**全周期重算覆盖**。SQL 批量聚合（每 200 只一批 GROUP BY；`--full` 首启走单遍全表 + 流式 upsert，实测单遍 ~8.5 分钟/类型，远优于分批随机 IO）。
 
-增量结束后顺带刷 work_day（幂等 INSERT IGNORE）并预热扫描缓存（run_daily.sh 编排）。
+**周频口径（用户拍板，"东财熔断器+盘中行过滤"方案作废）**：行情源统一新浪、**接受一周延迟**、每周六同步本周未爬数据。原因：新浪无视日期参数每次返回全历史（~15-20s/股），日频全量需 20+h 不可行；东财行情口曾支持小窗口（~3-6s/股）但服务器限流实录不可用。2 路并行后全量预计 **8~15h**。幂等 + flock 防重叠，漏跑下周自然补齐。
+
+**新股维护（2026-08-10 接入，`fetch.new_stocks`，跑在分片之前）**：交易所名单刷新 vs stock_info 检新增（另有"已登记但零行情"自愈分支）→ 新增股逐只走 fetch.history 全历史双轨回填（years=40，新浪自然截到上市首日）→ **先回填后登记 stock_info**（中断则下周自愈重跑，幂等）。无新增时 0 成本通过；新股通常每周 0~3 只。新浪不支持的代码（如 689009 九号公司 CDR，689 段）进 `SKIP_CODES` 永久排除，不重复试错。新股当周即被随后的分片增量衔接。
+
+物化结束后刷 work_day（幂等 INSERT IGNORE）并预热扫描缓存（run_daily.sh 编排）。
 
 ### 3.3 调度
 
@@ -99,3 +111,5 @@ ID 规则：`stock_quote`=MD5(code:yyyymmdd:adjust)、`stock_dividend`=MD5(code:
 **双轨 + 闸③修复（2026-08-04 全过）**：`verify_fix.py` 纯反推回归 600519=6 / 600030=9 / 600221=0 / 601880=3 全部不变；万科 000002 双轨（40 年）：公告日历 35 条，落库事件 35 个（derive+announce 32 + announce 3），suspect 0，review 7（均为 1990 年代低 qfq 价位段 k 理论/反推差 1~3%，预期内），对拍最大偏差 11.25%（1991 年）但自适应超差比 0.23 在容差内。24 只事故股清理重灌后 SQL 断言：每股事件 ≤40、ADJUST 两口径行数一致。
 
 **suspect 晋升（2026-08-04 增补）**：首轮双轨重灌发现 18 只各有 1 个 suspect（东财日历缺口：股改对价/缩股/重组，如 000027 股改对价 20060426），丢弃导致平台段失真（对拍超差比 3.3~597）。晋升规则上线后重灌：18 只各晋升 1 条 `SOURCE='derive'`（000027 20060426 k=0.8535 已 SQL 复核），**对拍超差比全部回落到 ≤0.333（舍入级）**；全 24 只 SOURCE 分布 derive+announce 456 / announce 47 / derive 18，ADJUST 两口径行数 1:1。
+
+**log 中转 + 2 路并行 + 物化（2026-08-10/11 实测）**：小样本分片冒烟（4 只写 log → finalize 并入/对账/备份/truncate 全过）后实跑全量同步：新股维护 58s（4 只新 IPO 回填登记）→ 分片 2 路并行 **5h42m**（rc0=2 个别股失败/rc1=0，对比单线程 23~30h 提速约 4~5 倍）→ finalize 并入 22072 行、对账一致、备份（1.6GB gz）、truncate。全市场水位对齐到 20260810（5535 只）。物化踩坑两则已修：① 周频路径 cutoff 占位符被 Python % 预填导致 pymysql 参数不匹配（周频路径此前从未真实跑过）；② SSCursor 流式读取时同连接 upsert/commit 掐断结果流（每类型仅落 5000 行），改双连接。首启 `--full` 全量物化 **9526s（2h39m）**：周 7,086,109 / 月 1,684,636 / 季 566,389 行；对拍 5 只代表股（600519/000002/920185/600030/300750）全月份 0 差异。

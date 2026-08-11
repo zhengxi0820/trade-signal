@@ -36,4 +36,11 @@ public interface StockQuoteMapper {
                                           @Param("adjust") String adjust,
                                           @Param("tradeDateMin") String tradeDateMin,
                                           @Param("currentPeriod") String currentPeriod);
+
+    /**
+     * 批量加载窗口内日线（日/周线全市场扫描：每批 ~200 只，按 code 顺序读索引，避免单股随机 IO）
+     */
+    List<StockQuoteDO> queryWindowBatch(@Param("codes") List<String> codes,
+                                        @Param("adjust") String adjust,
+                                        @Param("tradeDateMin") String tradeDateMin);
 }

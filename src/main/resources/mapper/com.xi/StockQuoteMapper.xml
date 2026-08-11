@@ -102,4 +102,13 @@
         join stock_quote c on c.code = #{code} and c.adjust = #{adjust} and c.trade_date = g.ed
         order by g.ed
     </select>
+
+    <!-- 批量窗口日线（日/周线全市场扫描）：每批 ~200 只按索引顺序读，避免 5534 次单股随机 IO -->
+    <select id="queryWindowBatch" resultMap="StockQuoteDOResultMap">
+        select * from stock_quote
+        where adjust = #{adjust} and trade_date &gt;= #{tradeDateMin}
+          and code in
+          <foreach collection="codes" item="c" open="(" separator="," close=")">#{c}</foreach>
+        order by code, trade_date
+    </select>
 </mapper>

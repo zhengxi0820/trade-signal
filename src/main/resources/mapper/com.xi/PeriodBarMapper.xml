@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xi.orm.mapper.PeriodBarMapper">
+
+    <resultMap id="PeriodBarDOResultMap" type="com.xi.orm.entity.PeriodBarDO">
+        <id column="ID" property="id"/>
+        <result column="PERIOD_TYPE" property="periodType"/>
+        <result column="CODE" property="code"/>
+        <result column="ADJUST" property="adjust"/>
+        <result column="PERIOD_START" property="periodStart"/>
+        <result column="PERIOD_END" property="periodEnd"/>
+        <result column="OPEN" property="open"/>
+        <result column="HIGH" property="high"/>
+        <result column="LOW" property="low"/>
+        <result column="CLOSE" property="close"/>
+        <result column="CREATED_AT" property="createdAt"/>
+        <result column="UPDATED_AT" property="updatedAt"/>
+    </resultMap>
+
+    <select id="queryByCode" resultMap="PeriodBarDOResultMap">
+        select * from stock_period_bar
+        where period_type = #{periodType} and code = #{code} and adjust = #{adjust}
+        order by period_end
+    </select>
+
+    <select id="queryBatch" resultMap="PeriodBarDOResultMap">
+        select * from stock_period_bar
+        where period_type = #{periodType} and adjust = #{adjust}
+          and code in
+          <foreach collection="codes" item="c" open="(" separator="," close=")">#{c}</foreach>
+        order by code, period_end
+    </select>
+
+    <select id="countAll" resultType="long">
+        select count(*) from stock_period_bar
+    </select>
+
+</mapper>

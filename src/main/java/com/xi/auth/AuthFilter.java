@@ -24,7 +24,8 @@ public class AuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/kdj/");
+        String uri = request.getRequestURI();
+        return !uri.startsWith("/kdj/") && !uri.startsWith("/watchlist");
     }
 
     @Override

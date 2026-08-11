@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自选股交互原型 — 交易位信号系统</title>
+<!--
+  原型（throwaway）：自选股勾选交互三变体，?variant=A|B|C 或底部条/左右方向键切换。
+  A=行首星标（推荐） B=选中后点按钮 C=checkbox 批量。
+  共用：顶部 tab「全市场 | 我的自选」、code/name 筛选框、自选页同结构+移出。
+  数据为静态模拟（20 只），点击行会选中高亮（模拟现有交互）。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f2f4f8; padding: 16px; }
+  .topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+  .page-tabs { display: flex; gap: 0; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(30,60,120,.08); }
+  .page-tabs button { padding: 9px 22px; border: none; background: #fff; font-size: 14px; color: #5a7a9d; cursor: pointer; }
+  .page-tabs button.active { background: #2b8fe8; color: #fff; }
+  .page-tabs .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px;
+    background: #ffb020; color: #fff; font-size: 11px; line-height: 18px; }
+  .page-tabs button.active .badge { background: #fff; color: #2b8fe8; }
+  .periods { display: flex; gap: 6px; }
+  .periods span { padding: 7px 16px; background: #fff; border-radius: 7px; font-size: 13px; color: #5a7a9d; cursor: pointer; }
+  .periods span.on { background: #e3f0fd; color: #2b8fe8; font-weight: 600; }
+  .search { margin-left: auto; position: relative; }
+  .search input { width: 240px; padding: 9px 12px 9px 32px; border: 1px solid #d6e5f3; border-radius: 8px; font-size: 13px; outline: none; }
+  .search input:focus { border-color: #3b9eff; box-shadow: 0 0 0 3px rgba(59,158,255,.14); }
+  .search::before { content: "🔍"; position: absolute; left: 10px; top: 8px; font-size: 12px; opacity: .55; }
+
+  .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(30,60,120,.08); overflow: hidden; }
+  .card-head { padding: 12px 16px; border-bottom: 1px solid #edf2f8; font-size: 14px; font-weight: 600; color: #33475f;
+    display: flex; align-items: center; gap: 12px; }
+  .card-head .cnt { color: #8fb0d4; font-weight: 400; }
+  .card-head .batch { margin-left: auto; display: flex; gap: 8px; }
+  .btn-sm { padding: 5px 14px; border-radius: 6px; border: 1px solid #cfe0f2; background: #f4f9ff; color: #2b8fe8;
+    font-size: 12px; cursor: pointer; }
+  .btn-sm:hover { background: #e3f0fd; }
+  .btn-sm.warn { color: #d03050; border-color: #f3c9d4; background: #fff5f7; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: right; padding: 9px 12px; color: #7a93b0; font-weight: 500; background: #f8fbfe; border-bottom: 1px solid #edf2f8; white-space: nowrap; }
+  td { text-align: right; padding: 8px 12px; border-bottom: 1px solid #f2f6fb; color: #33475f; white-space: nowrap; }
+  th.l, td.l { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f4f9ff; }
+  tbody tr.sel { background: #e3f0fd; }
+  .star { cursor: pointer; font-size: 16px; color: #c8d8ea; user-select: none; transition: transform .12s; }
+  .star:hover { transform: scale(1.25); }
+  .star.on { color: #ffb020; }
+  .empty { padding: 48px; text-align: center; color: #9db4cc; font-size: 13px; }
+  .link { color: #2b8fe8; cursor: pointer; font-size: 12px; }
+  .link:hover { text-decoration: underline; }
+  mark { background: #fff0c2; padding: 0; }
+
+  .proto-bar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10000;
+    display: flex; align-items: center; gap: 14px; padding: 8px 16px; border-radius: 999px;
+    background: #16283c; color: #cfe3f7; font-size: 13px; box-shadow: 0 8px 30px rgba(10,30,60,.35); }
+  .proto-bar button { background: #26405c; color: #cfe3f7; width: 28px; height: 28px; border-radius: 50%; font-size: 15px; border: none; cursor: pointer; }
+  .proto-bar button:hover { background: #35577c; }
+  .proto-bar .name { min-width: 200px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="page-tabs">
+    <button id="tab-all" class="active" onclick="switchPage('all')">全市场</button>
+    <button id="tab-fav" onclick="switchPage('fav')">我的自选<span class="badge" id="favCnt">0</span></button>
+  </div>
+  <div class="periods"><span class="on">日线</span><span>周线</span><span>月线</span><span>季线</span></div>
+  <div class="search"><input id="kw" placeholder="输入代码或名称筛选" oninput="render()"></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span id="listTitle">所有股票</span><span class="cnt" id="listCnt"></span>
+    <div class="batch" id="batchBar"><!-- B/C 变体的操作按钮插这里 --></div>
+  </div>
+  <div style="max-height: 560px; overflow-y: auto">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none"></div>
+  </div>
+</div>
+
+<div class="proto-bar">
+  <button id="prev">‹</button>
+  <span class="name" id="vname"></span>
+  <button id="next">›</button>
+</div>
+
+<script>
+// ---- 模拟数据 ----
+var STOCKS = [
+  ['600519','贵州茅台',1715.20,58.3,42.1], ['000001','平安银行',11.25,71.2,55.6],
+  ['300750','宁德时代',189.45,33.8,29.4], ['600030','中信证券',21.06,45.5,40.2],
+  ['000002','万科A',7.83,66.1,58.9],     ['601880','辽港股份',1.62,19.5,22.3],
+  ['688981','中芯国际',88.12,52.7,48.1],  ['600221','海航控股',1.55,41.2,38.8],
+  ['000063','中兴通讯',31.44,63.0,51.2],  ['002594','比亚迪',255.00,28.6,31.0],
+  ['600036','招商银行',34.78,49.9,44.5],  ['000858','五粮液',128.90,37.3,35.8],
+  ['601318','中国平安',45.66,55.0,47.3],  ['600900','长江电力',27.31,61.8,53.9],
+  ['000651','格力电器',41.22,44.4,41.7],  ['601012','隆基绿能',18.55,25.9,28.4],
+  ['600276','恒瑞医药',46.83,58.8,50.1],  ['000725','京东方A',4.02,69.5,60.6],
+  ['600050','中国联通',5.44,47.2,43.0],   ['601899','紫金矿业',17.89,35.6,33.3]
+];
+// 交互状态
+var favs = new Set(['601880']);          // 我的自选（预置一只演示）
+var selected = null;                     // 当前选中行 code（变体 B 用）
+var checked = new Set();                 // 勾选的行（变体 C 用）
+var page = 'all';                        // all | fav
+
+var VARIANTS = { A: 'A — 行首星标（推荐）', B: 'B — 选中后点按钮', C: 'C — checkbox 批量' };
+var keys = Object.keys(VARIANTS);
+function currentVariant() {
+  var v = new URLSearchParams(location.search).get('variant');
+  return VARIANTS[v] ? v : 'A';
+}
+function go(v) {
+  var url = new URL(location.href); url.searchParams.set('variant', v);
+  history.replaceState(null, '', url); render();
+}
+function step(d) {
+  var i = keys.indexOf(currentVariant());
+  go(keys[(i + d + keys.length) % keys.length]);
+}
+document.getElementById('prev').onclick = function () { step(-1); };
+document.getElementById('next').onclick = function () { step(1); };
+document.addEventListener('keydown', function (e) {
+  var t = document.activeElement;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  if (e.key === 'ArrowLeft') step(-1);
+  if (e.key === 'ArrowRight') step(1);
+});
+
+function switchPage(p) {
+  page = p;
+  document.getElementById('tab-all').className = p === 'all' ? 'active' : '';
+  document.getElementById('tab-fav').className = p === 'fav' ? 'active' : '';
+  render();
+}
+
+function hi(text, kw) {
+  if (!kw) return text;
+  var i = text.indexOf(kw);
+  if (i < 0) return text;
+  return text.slice(0, i) + '<mark>' + text.slice(i, i + kw.length) + '</mark>' + text.slice(i + kw.length);
+}
+
+function render() {
+  var v = currentVariant();
+  document.getElementById('vname').textContent = VARIANTS[v];
+  document.getElementById('favCnt').textContent = favs.size;
+  var kw = document.getElementById('kw').value.trim();
+
+  var list = STOCKS.filter(function (s) {
+    if (page === 'fav' && !favs.has(s[0])) return false;
+    if (kw && s[0].indexOf(kw) < 0 && s[1].indexOf(kw) < 0) return false;
+    return true;
+  });
+
+  document.getElementById('listTitle').textContent = page === 'all' ? '所有股票' : '我的自选';
+  document.getElementById('listCnt').textContent = '（' + list.length + '）';
+
+  // 表头（按变体加列）
+  var head = '';
+  if (v === 'A') head += '<th class="l" style="width:36px">☆</th>';
+  if (v === 'C') head += '<th class="l" style="width:36px"><input type="checkbox" id="ckAll"></th>';
+  head += '<th class="l">代码</th><th class="l">名称</th><th>收盘</th><th>K</th><th>D</th>';
+  if (page === 'fav') head += '<th>操作</th>';
+  document.getElementById('thead').innerHTML = head;
+
+  // 批量操作栏
+  var bar = document.getElementById('batchBar');
+  if (page === 'fav') {
+    bar.innerHTML = '<button class="btn-sm warn" onclick="clearFavs()">清空自选</button>';
+  } else if (v === 'B') {
+    bar.innerHTML = '<button class="btn-sm" onclick="addSelected()">☆ 加入自选</button>';
+  } else if (v === 'C') {
+    bar.innerHTML = '<button class="btn-sm" onclick="addChecked()">加入自选（<span id="ckCnt">' + checked.size + '</span>）</button>';
+  } else {
+    bar.innerHTML = '';
+  }
+
+  // 行
+  var rows = list.map(function (s) {
+    var r = '';
+    if (v === 'A') r += '<td class="l"><span class="star' + (favs.has(s[0]) ? ' on' : '') + '" onclick="event.stopPropagation();toggleFav(\'' + s[0] + '\')">' + (favs.has(s[0]) ? '★' : '☆') + '</span></td>';
+    if (v === 'C') r += '<td class="l"><input type="checkbox" ' + (checked.has(s[0]) ? 'checked' : '') + ' onclick="event.stopPropagation();toggleCheck(\'' + s[0] + '\')"></td>';
+    r += '<td class="l">' + hi(s[0], kw) + '</td><td class="l">' + hi(s[1], kw) + '</td><td>' + s[2].toFixed(2) + '</td><td>' + s[3] + '</td><td>' + s[4] + '</td>';
+    if (page === 'fav') r += '<td><span class="link" onclick="event.stopPropagation();toggleFav(\'' + s[0] + '\')">移出</span></td>';
+    return '<tr class="' + (selected === s[0] ? 'sel' : '') + '" onclick="select(\'' + s[0] + '\')">' + r + '</tr>';
+  }).join('');
+  document.getElementById('tbody').innerHTML = rows;
+  document.getElementById('empty').style.display = list.length ? 'none' : '';
+  document.getElementById('empty').textContent = page === 'fav' && !favs.size
+    ? '还没有自选股，去全市场页标几只吧'
+    : '没有匹配「' + kw + '」的股票';
+
+  var ckAll = document.getElementById('ckAll');
+  if (ckAll) ckAll.onchange = function () {
+    if (ckAll.checked) { list.forEach(function (s) { checked.add(s[0]); }); }
+    else { checked.clear(); }
+    render();
+  };
+}
+
+function select(code) { selected = code; render(); }
+function toggleFav(code) {
+  if (favs.has(code)) { favs.delete(code); } else { favs.add(code); }
+  render();
+}
+function toggleCheck(code) {
+  if (checked.has(code)) { checked.delete(code); } else { checked.add(code); }
+  render();
+}
+function addSelected() {
+  if (!selected) { alert('先点选一行'); return; }
+  favs.add(selected); render();
+}
+function addChecked() {
+  checked.forEach(function (c) { favs.add(c); });
+  checked.clear(); render();
+}
+function clearFavs() { favs.clear(); render(); }
+
+render();
+</script>
+</body>
+</html>

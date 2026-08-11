@@ -47,12 +47,19 @@ python -m adjust.workday
 python -m fetch.new_stocks --dry-run    # 只检测打印不写库；--simulate CODE 模拟新增分支
 python -m fetch.new_stocks              # 生产执行（幂等，无新增 0 成本）
 
-# 增量（生产，周频）：新浪唯一行情源（全历史抓取 ~15-20s/股），幂等可重跑
-python -m fetch.daily --codes 600519 600030
-python -m fetch.daily --all        # 全量 5535 只，周跑预计 23~30h
+# 增量（生产，周频 + log 表中转 + 2 路并行）：
+python -m fetch.daily --shard 0/2    # 分片：写 stock_quote_log + 事件暂存（每线程限流 3s）
+python -m fetch.daily --shard 1/2
+python -m fetch.daily --finalize     # 收尾：事件统一执行+rescale → 并入主表 → 对账 → 备份 → truncate
+python -m fetch.daily --codes 600519 # 手工调试：单股直写主表（旧行为）
+python -m fetch.daily --all          # 单线程直写主表（应急兜底，不推荐周跑用）
+
+# 周期物化（stock_period_bar 周/月/季）：常规周增量；首启/重建用 --full（单遍全表流式）
+python -m aggregate.period_bar
+python -m aggregate.period_bar --full
 # 服务器已由 /etc/cron.d/trade-signal-daily 周跑（每周六 09:17，wrapper run_daily.sh：
-# flock 防重叠 → fetch.new_stocks 新股维护 → fetch.daily --all → adjust.workday 刷交易日历
-# → warm_cache 预热，日志 daily.log）；东财行情口已退出生产（限流实录），公告日历保留
+# flock → fetch.new_stocks 新股维护 → 分片 0/2 ‖ 1/2 → finalize → adjust.workday
+# → aggregate.period_bar → warm_cache 预热，日志 daily.log）；东财行情口已退出生产（限流实录），公告日历保留
 ```
 
 ## 目录
@@ -62,8 +69,9 @@ common/  db.py（连接/MD5/UNIX时间戳） const.py（ADJUST、板块前缀、
 fetch/   stock_list.py（灌 stock_info） history.py（历史回填） daily.py（每日增量）
          dividend.py（东财公告除权日历：分红+配股）
 adjust/  factor.py（阶梯+五道闸事件判定+k拟合，纯函数） merge.py（双轨合并）
-         backfill.py（初算+对拍+事件数保险） incremental.py（每日增量复权）
+         backfill.py（初算+对拍+事件数保险） incremental.py（增量复权，支持分片暂存）
          workday.py（交易日历）
+aggregate/ period_bar.py（周/月/季物化聚合，--full 全量）
 pilot.py 试点编排入口
 verify_fix.py 事件判定只读验证（纯反推回归 + 万科双轨）
 full_backfill.py 全量历史回填（断点续跑 + 事件数保险）

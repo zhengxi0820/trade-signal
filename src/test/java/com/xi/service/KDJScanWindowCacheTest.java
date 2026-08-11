@@ -312,6 +312,41 @@ class KDJScanWindowCacheTest {
     }
 
     /**
+     * 物化表路径对拍：stock_period_bar 有数据时月/季扫描走批量读物化表，
+     * 结果必须与全历史基准一致。物化表内容用 KDJHandler.aggregate 全历史直算灌入。
+     */
+    @Test
+    void aggTablePathMatchesFullHistory() {
+        // 灌物化表：周 + 月 + 季，bars 由 handler 全历史聚合（等价于 scripts 物化口径）
+        LocalDate today = LocalDate.now();
+        for (String code : CODES) {
+            StockQuoteQuery query = new StockQuoteQuery();
+            query.setCode(code);
+            query.setAdjust("1");
+            List<StockQuoteDO> full = stockQuoteMapper.queryAll(query);
+            for (String kdjType : new String[]{"1", "2", "3"}) {
+                for (KDJHandler.PeriodBar bar : handler.aggregate(full, kdjType, today)) {
+                    jdbc.update("insert into stock_period_bar(PERIOD_TYPE,CODE,ADJUST,PERIOD_START,PERIOD_END,OPEN,HIGH,LOW,CLOSE)"
+                                    + " values (?,?,?,?,?,?,?,?,?)",
+                            kdjType, code, "1", bar.startDate, bar.endDate,
+                            bar.open, bar.high, bar.low, bar.close);
+                }
+            }
+        }
+        try {
+            for (String kdjType : new String[]{"1", "2", "3"}) {
+                KDJParam param = new KDJParam();
+                param.setKdjType(kdjType);
+                List<CrossStockVO> actual = kdjService.getAllStocks(param);
+                Map<String, CrossStockVO> expected = referenceScan(kdjType, ReferenceMode.ALL, null);
+                assertSameContent(expected, actual, "agg-table all-stocks kdjType=" + kdjType);
+            }
+        } finally {
+            jdbc.update("delete from stock_period_bar");
+        }
+    }
+
+    /**
      * 数值字段对拍：窗口暖机残差理论上限 ~1e-13，叠加每步 1e-10 舍入再量子化，
      * 容差取 1e-9；股票集合（信号判定）与 close（直接取自行情）必须精确一致。
      */

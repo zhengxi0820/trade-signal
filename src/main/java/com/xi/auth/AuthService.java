@@ -176,16 +176,21 @@ public class AuthService {
 
     /** 从请求里取认证 Cookie 并校验。 */
     public boolean hasValidCookie(HttpServletRequest request) {
+        return subjectOf(request) != null;
+    }
+
+    /** 从请求 Cookie 解析认证主体（用户名或 "key"）；未认证返回 null。 */
+    public String subjectOf(HttpServletRequest request) {
         Cookie[] cookies = request.getCookies();
         if (cookies == null) {
-            return false;
+            return null;
         }
         for (Cookie c : cookies) {
-            if (COOKIE_NAME.equals(c.getName()) && isValidToken(c.getValue())) {
-                return true;
+            if (COOKIE_NAME.equals(c.getName())) {
+                return subjectOf(c.getValue());
             }
         }
-        return false;
+        return null;
     }
 
     /** 构造认证 Cookie（HttpOnly + SameSite=Strict；Secure 按配置，默认开）。 */

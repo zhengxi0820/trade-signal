@@ -108,7 +108,7 @@ class UserServiceTest {
         assertNull(auth.subjectOf(token.replace("alice", "admin")));
         assertNull(auth.subjectOf(token.substring(0, token.length() - 2) + "00"));
         assertNull(auth.subjectOf("garbage"));
-        assertNull(auth.subjectOf(null));
+        assertNull(auth.subjectOf((String) null));
         // 密钥登录的 subject 固定 key
         assertEquals("key", auth.subjectOf(auth.issueToken("key")));
     }

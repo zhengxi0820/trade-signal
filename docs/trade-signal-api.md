@@ -32,6 +32,8 @@
 | `GET /kdj/all-stocks` | 全部股票的截止周期行情与 KDJ（不过滤），供「所有股票」列表 |
 | `GET /kdj/periods` | 可选周期列表（已完结周期），供截止周期选择器 |
 | `POST /kdj/cache/refresh` | 清空全市场扫描结果缓存（运维兜底；日常失效靠数据水位自动完成） |
+| `GET /watchlist` | 我的自选股代码列表（按认证 token 的用户名隔离） |
+| `POST /watchlist` / `POST /watchlist/remove` | 加入 / 移出自选，body `{"code":"600519"}`，重复加入幂等 204 |
 
 ## 入参（KDJParam，series / gold-cross / trade-signal / all-stocks 四个接口共用）
 
@@ -155,5 +157,5 @@ GET /kdj/periods?kdjType=1&market=SH
 
 ## 备注
 
-- 全市场扫描（code 为空）走两层内存缓存：结果层（接口+全部参数为 key，命中毫秒级）+ bars 层（每股票每周期 132 根窗口 K 线，key 不含 n/m1/m2）。因此：调阈值/间距/开关等过滤参数毫秒级；调 n/m1/m2 只重递推不取数（秒级）；调 adjust 或回看超出窗口的截止周期才触发真实重算。新行情入库后按 `max(trade_date)` 水位自动失效。日/周线扫描走窗口裁剪，月/季线走 SQL 预聚合，信号判定均与全历史计算一致（H2 对拍保证）；单票 `/kdj/series` 不受影响，始终全历史实时计算。
+- 全市场扫描（code 为空）走两层内存缓存：结果层（接口+全部参数为 key，命中毫秒级）+ bars 层（每股票每周期 132 根窗口 K 线，key 不含 n/m1/m2）。取数：周/月/季线读周期物化表 `stock_period_bar`（scripts 周频物化，未启用时月/季退回现场聚合、周线退回批量原始行聚合），日线批量窗口读原始行；全市场扫描按 200 只/批装载。因此：调阈值/间距/开关等过滤参数毫秒级；调 n/m1/m2 只重递推不取数（秒级）；调 adjust 或回看超出窗口的截止周期才触发重载。新行情入库后按 `max(trade_date)` 水位自动失效。信号判定均与全历史计算一致（H2 对拍保证）；单票 `/kdj/series` 不受影响，始终全历史实时计算。
 - `currGoldCrossMax` 传 0 就是字面 0（等于过滤掉几乎所有信号），无特殊语义；想"不限"，series / gold-cross / all-stocks 不传即可，trade-signal 传一个足够大的值。

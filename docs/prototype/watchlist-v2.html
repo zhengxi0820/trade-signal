@@ -3,11 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>交易位信号系统</title>
+  <title>自选股原型（兼容现有页面）— 交易位信号系统</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/vendor/index.css">
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="../../src/main/resources/static/vendor/index.css">
+  <link rel="stylesheet" href="../../src/main/resources/static/css/style.css">
+  <!-- 原型新增样式 -->
+  <style>
+    .page-tabs { display: flex; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(30,60,120,.1); }
+    .page-tabs button { padding: 10px 22px; border: none; background: #fff; font-size: 14px; color: #5a7a9d; cursor: pointer; }
+    .page-tabs button.active { background: #2b8fe8; color: #fff; }
+    .page-tabs .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; background: #ffb020; color: #fff; font-size: 11px; line-height: 18px; }
+    .page-tabs button.active .badge { background: #fff; color: #2b8fe8; }
+    .fav-star { cursor: pointer; font-size: 15px; color: #c8d8ea; user-select: none; }
+    .fav-star:hover { transform: scale(1.2); display: inline-block; }
+    .fav-star.on { color: #ffb020; }
+    .search-box { margin-left: auto; }
+  </style>
 </head>
 <body>
 <div id="app">
@@ -50,11 +62,11 @@
 
   <!-- 顶部工具区 -->
   <div class="toolbar">
-    <!-- 页签：全市场 / 我的自选 -->
-    <nav class="nav-underline">
-      <a :class="{on: page === 'all'}" @click="switchPage('all')">全市场</a>
-      <a :class="{on: page === 'fav'}" @click="switchPage('fav')">我的自选</a>
-    </nav>
+    <!-- 【原型新增】页签：全市场 / 我的自选 -->
+    <div class="page-tabs">
+      <button :class="{active: page === 'all'}" @click="switchPage('all')">全市场</button>
+      <button :class="{active: page === 'fav'}" @click="switchPage('fav')">我的自选<span class="badge">{{ favs.length }}</span></button>
+    </div>
     <div class="period-btns">
       <el-radio-group v-model="kdjType" size="large">
         <el-radio-button value="0">日线</el-radio-button>
@@ -110,11 +122,12 @@
         </el-radio-group>
       </template>
 
-      <el-input v-model="searchKw" placeholder="代码 / 名称筛选" clearable style="width: 200px"></el-input>
       <el-button type="primary" plain icon="Setting" @click="paramOpen = !paramOpen">
         参数设置
       </el-button>
-      <el-button type="primary" icon="Search" :loading="querying" @click="loadLists">查询<span v-if="queryDirty" class="query-dot"></span></el-button>
+      <el-button type="primary" icon="Search" :loading="querying" @click="loadLists">查询</el-button>
+      <!-- 【原型新增】code / 名称筛选 -->
+      <el-input v-model="searchKw" class="search-box" placeholder="代码 / 名称筛选" clearable style="width: 220px"></el-input>
     </div>
 
     <!-- 参数面板：内嵌展开，非弹窗；默认值与后端一致 -->
@@ -269,10 +282,10 @@
   </el-card>
 </div>
 
-<script src="/vendor/vue.global.prod.js"></script>
-<script src="/vendor/index.full.min.js"></script>
-<script src="/vendor/zh-cn.min.js"></script>
-<script src="/vendor/echarts.min.js"></script>
-<script src="/js/app.js"></script>
+<script src="../../src/main/resources/static/vendor/vue.global.prod.js"></script>
+<script src="../../src/main/resources/static/vendor/index.full.min.js"></script>
+<script src="../../src/main/resources/static/vendor/zh-cn.min.js"></script>
+<script src="../../src/main/resources/static/vendor/echarts.min.js"></script>
+<script src="watchlist-v2.js"></script>
 </body>
 </html>

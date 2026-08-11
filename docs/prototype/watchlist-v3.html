@@ -3,11 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>交易位信号系统</title>
+  <title>导航风格原型 D1/D2/D3 — 交易位信号系统</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/vendor/index.css">
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="../../src/main/resources/static/vendor/index.css">
+  <link rel="stylesheet" href="../../src/main/resources/static/css/style.css">
+  <!-- 原型新增样式 -->
+  <style>
+    .fav-star { cursor: pointer; font-size: 15px; color: #c8d8ea; user-select: none; }
+    .fav-star:hover { transform: scale(1.2); display: inline-block; }
+    .fav-star.on { color: #ffb020; }
+    .search-box { margin-left: auto; }
+
+    /* D1：下划线文字 tab（Linear/Vercel 风） */
+    .nav-row { margin-bottom: 12px; }
+    .nav-underline { display: flex; justify-content: center; gap: 36px; border-bottom: 1px solid #e4ebf3; padding-bottom: 0; }
+    .query-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ffb020; margin-left: 5px; vertical-align: middle; }
+    .nav-underline a { position: relative; padding: 6px 2px 10px; font-size: 15px; color: #7a93b0; cursor: pointer; }
+    .nav-underline a.on { color: #1a3a5c; font-weight: 600; }
+    .nav-underline a.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: #2b8fe8; border-radius: 2px; }
+    .nav-underline .cnt, .nav-links .cnt { display: inline-block; margin-left: 5px; font-size: 11px; color: #fff; background: #ffb020; border-radius: 9px; padding: 0 6px; line-height: 17px; }
+    .nav-underline a.on .cnt { background: #2b8fe8; }
+
+    /* D2：Apple 大标题 + 次级文字链 */
+    .nav-d2 { display: flex; align-items: baseline; gap: 20px; }
+    .nav-title { font-size: 24px; font-weight: 600; color: #1d2733; letter-spacing: .5px; }
+    .nav-links { display: flex; gap: 18px; }
+    .nav-links a { font-size: 13px; color: #8ba1b8; cursor: pointer; padding-bottom: 2px; border-bottom: 1px solid transparent; }
+    .nav-links a:hover { color: #2b8fe8; }
+    .nav-links a.on { color: #2b8fe8; border-bottom-color: #2b8fe8; }
+
+    /* D3：左侧竖排导航 */
+    .side-nav { position: fixed; left: 0; top: 0; bottom: 0; width: 148px; background: #fff;
+      border-right: 1px solid #e8eef5; padding: 20px 12px; z-index: 100; }
+    .side-nav .logo { font-size: 13px; font-weight: 600; color: #1a3a5c; margin: 0 8px 18px; letter-spacing: 1px; }
+    .side-nav a { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 4px;
+      border-radius: 8px; font-size: 14px; color: #5a7a9d; cursor: pointer; }
+    .side-nav a:hover { background: #f4f9ff; }
+    .side-nav a.on { background: #e3f0fd; color: #2b8fe8; font-weight: 600; }
+    .side-nav .cnt { margin-left: auto; font-size: 11px; color: #fff; background: #ffb020; border-radius: 9px; padding: 0 6px; line-height: 17px; }
+    .side-nav a.on .cnt { background: #2b8fe8; }
+    body.has-sidenav { padding-left: 164px; }
+
+    /* 原型切换条 */
+    .proto-bar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10000;
+      display: flex; align-items: center; gap: 14px; padding: 8px 16px; border-radius: 999px;
+      background: #16283c; color: #cfe3f7; font-size: 13px; box-shadow: 0 8px 30px rgba(10,30,60,.35); }
+    .proto-bar button { background: #26405c; color: #cfe3f7; width: 28px; height: 28px; border-radius: 50%; font-size: 15px; border: none; cursor: pointer; }
+    .proto-bar .name { min-width: 220px; text-align: center; }
+  </style>
 </head>
 <body>
 <div id="app">
@@ -48,13 +92,29 @@
     </div>
   </div>
 
+  <!-- D3 侧边导航 -->
+  <div v-if="tbVariant === 'D3'" class="side-nav">
+    <div class="logo">交易位信号</div>
+    <a :class="{on: page === 'all'}" @click="switchPage('all')">◆ 全市场</a>
+    <a :class="{on: page === 'fav'}" @click="switchPage('fav')">★ 我的自选<span class="cnt">{{ favs.length }}</span></a>
+  </div>
+
   <!-- 顶部工具区 -->
   <div class="toolbar">
-    <!-- 页签：全市场 / 我的自选 -->
-    <nav class="nav-underline">
-      <a :class="{on: page === 'all'}" @click="switchPage('all')">全市场</a>
-      <a :class="{on: page === 'fav'}" @click="switchPage('fav')">我的自选</a>
-    </nav>
+    <!-- 【原型新增】页签：全市场 / 我的自选（D1/D2 横排，D3 见左侧导航） -->
+    <div v-if="tbVariant !== 'D3'" class="nav-row" :class="'nav-' + tbVariant.toLowerCase()">
+      <template v-if="tbVariant === 'D2'">
+        <span class="nav-title">{{ page === 'fav' ? '我的自选' : '全市场' }}</span>
+        <nav class="nav-links">
+          <a :class="{on: page === 'all'}" @click="switchPage('all')">全市场</a>
+          <a :class="{on: page === 'fav'}" @click="switchPage('fav')">我的自选<span class="cnt">{{ favs.length }}</span></a>
+        </nav>
+      </template>
+      <nav v-else class="nav-underline">
+        <a :class="{on: page === 'all'}" @click="switchPage('all')">全市场</a>
+        <a :class="{on: page === 'fav'}" @click="switchPage('fav')">我的自选<span class="cnt">{{ favs.length }}</span></a>
+      </nav>
+    </div>
     <div class="period-btns">
       <el-radio-group v-model="kdjType" size="large">
         <el-radio-button value="0">日线</el-radio-button>
@@ -110,6 +170,7 @@
         </el-radio-group>
       </template>
 
+      <!-- 【原型新增】code / 名称筛选（挪到截止周期与参数设置之间；本地过滤不发请求） -->
       <el-input v-model="searchKw" placeholder="代码 / 名称筛选" clearable style="width: 200px"></el-input>
       <el-button type="primary" plain icon="Setting" @click="paramOpen = !paramOpen">
         参数设置
@@ -269,10 +330,37 @@
   </el-card>
 </div>
 
-<script src="/vendor/vue.global.prod.js"></script>
-<script src="/vendor/index.full.min.js"></script>
-<script src="/vendor/zh-cn.min.js"></script>
-<script src="/vendor/echarts.min.js"></script>
-<script src="/js/app.js"></script>
+<div class="proto-bar">
+  <button onclick="tbStep(-1)">‹</button>
+  <span class="name" id="tbname"></span>
+  <button onclick="tbStep(1)">›</button>
+</div>
+<script>
+  // 工具栏变体切换（原型）：?variant=D1|D2|D3 或左右方向键
+  var TB_VARIANTS = { D1: 'D1 — 下划线文字 tab（Linear/Vercel）', D2: 'D2 — Apple 大标题 + 文字链', D3: 'D3 — 左侧竖排导航' };
+  function tbCur() { var v = new URLSearchParams(location.search).get('variant'); return TB_VARIANTS[v] ? v : 'D1'; }
+  function tbShow() {
+    var v = tbCur();
+    document.getElementById('tbname').textContent = TB_VARIANTS[v];
+    document.body.classList.toggle('has-sidenav', v === 'D3');
+    if (window.__tbVueApply) window.__tbVueApply(v);
+  }
+  function tbStep(d) {
+    var ks = Object.keys(TB_VARIANTS), i = ks.indexOf(tbCur());
+    var url = new URL(location.href); url.searchParams.set('variant', ks[(i + d + ks.length) % ks.length]);
+    history.replaceState(null, '', url); tbShow();
+  }
+  document.addEventListener('keydown', function (e) {
+    var t = document.activeElement;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    if (e.key === 'ArrowLeft') tbStep(-1);
+    if (e.key === 'ArrowRight') tbStep(1);
+  });
+</script>
+<script src="../../src/main/resources/static/vendor/vue.global.prod.js"></script>
+<script src="../../src/main/resources/static/vendor/index.full.min.js"></script>
+<script src="../../src/main/resources/static/vendor/zh-cn.min.js"></script>
+<script src="../../src/main/resources/static/vendor/echarts.min.js"></script>
+<script src="watchlist-v2.js"></script>
 </body>
 </html>

@@ -132,16 +132,18 @@ def fetch_pair(code: str, start: date, end: date, interval: float = 2.5, sources
     raise RuntimeError(f"{code} 全部数据源失败: {last_err}")
 
 
-def upsert_quote_rows(conn, code: str, rows: list, adjust: str) -> int:
+def upsert_quote_rows(conn, code: str, rows: list, adjust: str, table: str = "stock_quote") -> int:
     """按 (CODE, ADJUST, TRADE_DATE) upsert 行情行。
 
     raw 行('0')只追加、qfq 行('1')可重算覆盖，两者都用同一 upsert 语句（幂等即可满足两种语义）。
     价格保留 4 位小数（DECIMAL(12,4)）。
+    table：周频分片阶段写 stock_quote_log（中转表），收尾并入 stock_quote；手工单股调试可直接写主表。
     """
+    assert table in ("stock_quote", "stock_quote_log"), f"非法目标表: {table}"
     from common.db import quote_id, unix_ts
     now = unix_ts()
-    sql = """
-        INSERT INTO stock_quote (ID, CODE, OPEN, HIGH, LOW, CLOSE, VOLUME, TRADE_DATE, ADJUST, CREATED_AT, UPDATED_AT)
+    sql = f"""
+        INSERT INTO {table} (ID, CODE, OPEN, HIGH, LOW, CLOSE, VOLUME, TRADE_DATE, ADJUST, CREATED_AT, UPDATED_AT)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             OPEN=VALUES(OPEN), HIGH=VALUES(HIGH), LOW=VALUES(LOW), CLOSE=VALUES(CLOSE),

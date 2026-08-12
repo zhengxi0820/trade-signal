@@ -18,6 +18,7 @@
 | Caddy 配置 | `/etc/caddy/Caddyfile` |
 | 行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每日 00:00** 跑 `run_daily.sh`（探针判断新浪是否有新数据且距水位 ≥3 天，无/不足则跳过；有才执行：新股检测回填 → 2 路并行分片写 `stock_quote_log`（新浪源，实测 5h42m）→ finalize（事件 rescale → 并入主表 → 对账 → 备份 → truncate）→ work_day → 周期物化 → 缓存预热）。日志 `/home/ops/scripts/daily.log` |
 | 物化自愈 | cron `/etc/cron.d/trade-signal-period-bar`，**每小时 :25** 跑 `ensure_period_bar.sh`：work_day 最新已完结周期 vs 物化表 max(period_end)，落后则补跑物化；与 run_daily 共用 `.run_daily.lock`（flock -n）防并发 |
+| 重启自动预热 | cron `/etc/cron.d/trade-signal-warm`，**每 10 分钟**跑 `ensure_warm.sh`：比对 systemd `ActiveEnterTimestamp` 与标记文件 `.warm_marker`，应用重启（OOM/异常/手动）后自动触发一次 `warm_cache.sh`（与运行中预热共用 `.warm.lock` 防并发；冷缓存窗口由扫描单飞兜底） |
 | 备份 | `/var/backups/trade-signal/`（**主备份在 finalize 里随同步完成即时执行**；另有 cron `/etc/cron.d/trade-signal-backup` 每周一 03:47 兜底，**只保留最新一份**；cron.d 文件必须 root:root 644，否则被拒跑） |
 | 运维账号 | `ops`（密钥登录 + sudo NOPASSWD）；root 直登已禁，密码/扫码认证已关 |
 
@@ -63,6 +64,8 @@ nohup /home/ops/scripts/warm_cache.sh > /home/ops/scripts/warm_cache.log 2>&1 &
 
 ## 已完成里程碑
 
+- 2026-08-12 重启自动预热：systemd `OnFailure=` 方案实测**不随 `Restart=` 触发**（失败后立即重启不激活 OnFailure），改用 cron 看门狗 `ensure_warm.sh`（每 10 分钟比对启动时间戳 vs 标记文件）；kill 演练验证通过：模拟 OOM → 自动重启 → 10 分钟内自动触发预热（日线冷 514s 后全部命中）。另确认 10:35 发版 jar 已含前端 B 版双图（其他参数双开关 + 单卡双图 + 持久化），无需再发版
+- 2026-08-12 OOM 事故与恢复：04:31 应用被 OOM killer 击杀（4C4G 无 swap，Java RSS 1.8G + MySQL 1.4G 顶满 3.6G）→ systemd 重启后两层缓存全冷 → 并发全市场日线扫描在 MySQL 堆叠（同批 200 只查询 9+ 并发、负载 7、登录转圈）。处理：新增 **2GB swap**（`/swapfile` + fstab 持久化）；**扫描结果缓存加单飞**（同 key 并发请求共享一次计算，ScanResultCache.computeIfAbsent + 单飞并发测试）；重启 + 串行预热后恢复（负载 0.13、命中毫秒级）。教训：4C4G 无 swap 是内存刀尖，任何缓存全冷 + 并发访问都会演变成 OOM；单飞是把"冷缓存风暴"从根上拆掉的关键
 - 2026-08-11 同步触发改版：cron 每周六 09:17 → 每日 00:00 + 探针（600519 最新交易日 ≤ 主表水位即跳过；另加 3 天闸门防新浪封 IP）+ 每小时物化自愈（ensure_period_bar.sh，与 run_daily 共用锁）；run_daily.sh 日志 rc 记录修复（原 `$(date)` 后取 `$?` 恒为 0，掩盖真实退出码）
 - 2026-08-11 扫描进入物化表时代：周/月/季直读 `stock_period_bar` + 批量装载（200 只/批）+ **新股误回退修复**（窗口未满=全历史已在窗口内，此前次新股被误判逐股全历史重算，是月/季线 846s+ 的元凶）。实测冷算：周 1309s→35s、月 846s→10s、季 3600s+→6s，缓存命中全亚秒级
 - 2026-08-11 管线 log 中转 + 2 路并行上线：分片期主表零写入（水位只翻一次），收尾统一事件 rescale + 并入 + 值级对账 + 即时备份 + truncate；全市场同步 23~30h→**5h42m**；`aggregate/period_bar.py` 物化首启 2h39m（周 708 万/月 168 万/季 56.6 万行），对拍 0 差异；数据对齐 20260810

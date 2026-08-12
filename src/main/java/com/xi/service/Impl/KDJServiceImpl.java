@@ -252,10 +252,10 @@ public class KDJServiceImpl implements KDJService {
     public List<CrossStockVO> getAllStocks(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
         String cacheKey = scanCacheKey("all-stocks", kdjParam);
-        List<CrossStockVO> cached = scanResultCache.get(cacheKey);
-        if (cached != null) {
-            return cached;
-        }
+        return scanResultCache.computeIfAbsent(cacheKey, () -> computeAllStocks(kdjParam));
+    }
+
+    private List<CrossStockVO> computeAllStocks(KDJParam kdjParam) {
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         if (!StringUtils.hasText(kdjParam.getCode())) {
@@ -280,7 +280,6 @@ public class KDJServiceImpl implements KDJService {
             }
             result.add(buildCrossStockVO(bars, kdjList, cross, kdjParam, infoMap.get(code)));
         }
-        scanResultCache.put(cacheKey, result);
         return result;
     }
 
@@ -288,10 +287,10 @@ public class KDJServiceImpl implements KDJService {
     public List<CrossStockVO> getGold(KDJParam kdjParam) {
         fillCommonDefaults(kdjParam);
         String cacheKey = scanCacheKey("gold-cross", kdjParam);
-        List<CrossStockVO> cached = scanResultCache.get(cacheKey);
-        if (cached != null) {
-            return cached;
-        }
+        return scanResultCache.computeIfAbsent(cacheKey, () -> computeGold(kdjParam));
+    }
+
+    private List<CrossStockVO> computeGold(KDJParam kdjParam) {
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         if (!StringUtils.hasText(kdjParam.getCode())) {
@@ -309,7 +308,6 @@ public class KDJServiceImpl implements KDJService {
                 result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, infoMap.get(code)));
             }
         }
-        scanResultCache.put(cacheKey, result);
         return result;
     }
 
@@ -318,10 +316,10 @@ public class KDJServiceImpl implements KDJService {
         fillCommonDefaults(kdjParam);
         fillTradeSignalDefaults(kdjParam);
         String cacheKey = scanCacheKey("trade-signal", kdjParam);
-        List<CrossStockVO> cached = scanResultCache.get(cacheKey);
-        if (cached != null) {
-            return cached;
-        }
+        return scanResultCache.computeIfAbsent(cacheKey, () -> computeTradeSignal(kdjParam));
+    }
+
+    private List<CrossStockVO> computeTradeSignal(KDJParam kdjParam) {
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
         // 交易位需回看上次金叉，窗口 = 间距上限 + 暖机；间距参数可配，窗口随参数放大
@@ -341,7 +339,6 @@ public class KDJServiceImpl implements KDJService {
                 result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, infoMap.get(code)));
             }
         }
-        scanResultCache.put(cacheKey, result);
         return result;
     }
 

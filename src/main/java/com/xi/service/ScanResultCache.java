@@ -9,6 +9,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.function.Supplier;
 
 /**
  * 全市场扫描结果缓存（gold-cross / trade-signal / all-stocks）。
@@ -28,6 +31,8 @@ public class ScanResultCache {
     private StockQuoteMapper stockQuoteMapper;
 
     private final Map<String, Entry> entries = new ConcurrentHashMap<>();
+    /** 单飞：同 key 并发未命中时共享一次计算，防冷缓存并发风暴（2026-08-12 OOM 事故根因） */
+    private final Map<String, CompletableFuture<List<CrossStockVO>>> inflight = new ConcurrentHashMap<>();
 
     private volatile String watermark;
     private volatile long watermarkAt;
@@ -65,6 +70,34 @@ public class ScanResultCache {
             entries.clear();
         }
         entries.put(key, new Entry(result, currentWatermark()));
+    }
+
+    /**
+     * 单飞取数：命中直接返回；未命中则同 key 的并发请求共享一次 supplier 计算。
+     * 计算完成后按"开始计算时水位"校验，水位已变则跳过写入（下个请求自然重算）。
+     */
+    public List<CrossStockVO> computeIfAbsent(String key, Supplier<List<CrossStockVO>> supplier) {
+        List<CrossStockVO> hit = get(key);
+        if (hit != null) {
+            return hit;
+        }
+        String wm = currentWatermark();
+        CompletableFuture<List<CrossStockVO>> future = inflight.computeIfAbsent(
+                key, k -> CompletableFuture.supplyAsync(supplier));
+        try {
+            List<CrossStockVO> result = future.get();
+            if (Objects.equals(wm, currentWatermark())) {
+                put(key, result);
+            }
+            return result;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("扫描被中断: " + key, e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("扫描失败: " + key, e.getCause());
+        } finally {
+            inflight.remove(key);
+        }
     }
 
     /**

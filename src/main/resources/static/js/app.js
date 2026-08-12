@@ -63,6 +63,9 @@ createApp({
       searchKw: '',
       // 周/月/季物化未就绪标记（后端 X-Data-Not-Ready 头）
       dataNotReady: false,
+      // 「其他参数」：点击查询后关闭图表 / 查询历史周期时同步展示最新周期（localStorage 持久化，纯 UI 偏好，不进查询）
+      closeChartOnQuery: localStorage.getItem('ts_close_chart_on_query') === '1',
+      showLatestChart: localStorage.getItem('ts_show_latest_chart') !== '0',
       // 有未应用的查询条件修改（点「查询」才发请求）
       queryDirty: false,
 
@@ -120,14 +123,43 @@ createApp({
       // echarts 实例与图表数据为非响应式（created 中初始化），避免 Vue 代理破坏 ECharts 内部机制
     };
   },
-  created() {
-    this.chart = null;
-    this._cd = null; // { labels, bars, kdj }
-    this._raf = null; // datazoom 事件的 rAF 合帧标记
-  },
   computed: {
     periodName() {
       return { '0': '日线', '1': '周线', '2': '月线', '3': '季线' }[this.kdjType];
+    },
+    // 是否处于「最新已完结周期」（此时无需额外展示最新周期图）
+    isLatestPeriod() {
+      const latest = this.periods[0];
+      if (!latest) return true;
+      if (this.kdjType === '0') return !!this.dailyDate && this.dailyDate === latest.tradeDate;
+      if (this.kdjType === '1') return !!this.weekValue && this.weekValue === (latest.tradeDateMin + '-' + latest.tradeDateMax);
+      if (this.kdjType === '2') return !!this.monthValue && this.monthValue === String(latest.tradeDate).slice(0, 6);
+      const y = +String(latest.tradeDateMin).slice(0, 4);
+      const q = Math.ceil(+String(latest.tradeDateMax).slice(4, 6) / 3);
+      return this.quarterYear === y && +this.quarter === q;
+    },
+    // 最新周期图是否展示：开关开 + 非最新截止
+    latestChartVisible() {
+      return this.showLatestChart && !this.isLatestPeriod;
+    },
+    // 截止周期图内联标签（与当前选择一致）
+    cutoffPeriodLabel() {
+      if (this.kdjType === '0') return fmtSlash(this.dailyDate);
+      if (this.kdjType === '1') {
+        const [mn, mx] = (this.weekValue || '-').split('-');
+        return fmtSlash(mn) + ' ~ ' + fmtSlash(mx);
+      }
+      if (this.kdjType === '2') return fmtSlash(String(this.monthValue || ''));
+      return (this.quarterYear || '') + 'Q' + (this.quarter || '');
+    },
+    // 最新周期图内联标签（periods[0]）
+    latestPeriodLabel() {
+      const p = this.periods[0];
+      if (!p) return '';
+      if (this.kdjType === '0') return fmtSlash(p.tradeDate);
+      if (this.kdjType === '1') return fmtSlash(p.tradeDateMin) + ' ~ ' + fmtSlash(p.tradeDateMax);
+      if (this.kdjType === '2') return fmtSlash(String(p.tradeDate).slice(0, 6));
+      return String(p.tradeDateMin).slice(0, 4) + 'Q' + Math.ceil(+String(p.tradeDateMax).slice(4, 6) / 3);
     },
     visibleGoldCols() {
       return this.allColumns.filter(c => this.goldCols.includes(c.prop));
@@ -190,10 +222,13 @@ createApp({
       }
     }
   },
-  created() {
-    // 任一业务接口 401 → 回到密钥遮罩
-    onUnauthorized = () => { this.authed = false; };
-  },
+    created() {
+      // 图表实例集（非响应式，避免 Vue 代理破坏 ECharts 内部机制）：
+      // cut = 截止周期图、latest = 最新周期图，各含 { chart, cd, raf }
+      this._charts = {};
+      // 任一业务接口 401 → 回到密钥遮罩
+      onUnauthorized = () => { this.authed = false; };
+    },
   async mounted() {
     // 进门检查：已认证直接初始化，未认证停在遮罩
     try {
@@ -440,6 +475,12 @@ createApp({
         fill('/kdj/trade-signal?' + q, 'tradeSignalList', 'loadingSignal')
       ]);
       this.querying = false;
+      // 「其他参数」：点击查询后关闭图表；否则已选股票的图表跟随新参数刷新
+      if (this.closeChartOnQuery) {
+        this.closeCharts();
+      } else if (this.chartStock) {
+        this.loadChart(this.chartStock.code);
+      }
     },
 
     // ---- 选中联动：三表互斥 + 拉取序列画图 ----
@@ -459,7 +500,7 @@ createApp({
       this.$refs.goldTable && this.$refs.goldTable.setCurrentRow();
       this.$refs.signalTable && this.$refs.signalTable.setCurrentRow();
       this.$refs.allTable && this.$refs.allTable.setCurrentRow();
-      this.chartStock = null;
+      this.closeCharts();
     },
     async loadChart(code) {
       this.loadingChart = true;
@@ -472,6 +513,11 @@ createApp({
           return;
         }
         this.renderChart(rows);
+        if (this.latestChartVisible) {
+          this.loadLatestChart(code);
+        } else {
+          this.disposeLatestChart();
+        }
       } catch (e) {
         ElementPlus.ElMessage.error('KDJ 序列加载失败：' + e.message);
       } finally {
@@ -489,7 +535,10 @@ createApp({
       const q = Math.ceil(+String(r.tradeDateMax).slice(4, 6) / 3);
       return y + 'Q' + q;
     },
-    renderChart(rows) {
+    renderChart(rows, T) {
+      const key = T ? T.key : 'cut';
+      const elId = T ? T.el : 'kdjChart';
+      const inst = this._chartInst(key);
       const labels = rows.map(r => this.periodLabel(r));
       const bars = rows.map(r => ({ open: +r.open, close: +r.close, low: +r.low, high: +r.high }));
       const kdj = rows.map((r, i) => ({
@@ -498,7 +547,7 @@ createApp({
         crossType: r.crossType || null,
         crossValue: r.crossValue === null || r.crossValue === undefined ? null : +r.crossValue
       }));
-      this._cd = { labels, bars, kdj };
+      inst.cd = { labels, bars, kdj };
 
       const last = kdj[kdj.length - 1];
       // KDJ 标题：N/M1/M2 + 最新 K/D/J，各自着色（K 黄、D 紫、J 蓝）
@@ -523,9 +572,9 @@ createApp({
         splitLine: { show: false }
       };
 
-      if (this.chart) this.chart.dispose();
-      this.chart = echarts.init(document.getElementById('kdjChart'));
-      const cw = document.getElementById('kdjChart').clientWidth;
+      if (inst.chart) inst.chart.dispose();
+      inst.chart = echarts.init(document.getElementById(elId));
+      const cw = document.getElementById(elId).clientWidth;
       const gl = 40, gw = cw - 80;
       // graphic 元素必须全部带唯一 id——无 id 元素按索引合并，
       // 会导致 updateRangeMarks 里按 id 更新的动态文本对位错乱
@@ -557,7 +606,7 @@ createApp({
           });
         }
       }
-      this.chart.setOption({
+      inst.chart.setOption({
         animation: false,
         axisPointer: { link: [{ xAxisIndex: 'all' }] },
         tooltip: {
@@ -640,21 +689,22 @@ createApp({
       }, true);
 
       // 拖动时每次 datazoom 都做 setOption 会掉帧：用 rAF 合帧，每帧最多重算一次标注
-      this.chart.on('datazoom', () => {
-        if (this._raf) return;
-        this._raf = requestAnimationFrame(() => {
-          this._raf = null;
-          this.updateRangeMarks();
+      inst.chart.on('datazoom', () => {
+        if (inst.raf) return;
+        inst.raf = requestAnimationFrame(() => {
+          inst.raf = null;
+          this._updateRangeMarks(key);
         });
       });
-      this.updateRangeMarks();
+      this._updateRangeMarks(key);
     },
     // 可见范围动态标注：价格最高/最低（点+短横线样式）、KDJ 最高/最低交汇（左侧文字）
-    updateRangeMarks() {
-      if (!this.chart || !this._cd) return;
-      const { labels, bars, kdj } = this._cd;
+    _updateRangeMarks(key) {
+      const inst = this._chartInst(key);
+      if (!inst.chart || !inst.cd) return;
+      const { labels, bars, kdj } = inst.cd;
       const len = bars.length;
-      const dz = this.chart.getOption().dataZoom[0];
+      const dz = inst.chart.getOption().dataZoom[0];
       // 可见下标：startValue 可能是数字下标、字符串类目值或空，统一转成下标
       const toIdx = (v, pct, isEnd) => {
         if (typeof v === 'number' && isFinite(v)) return v;
@@ -720,7 +770,7 @@ createApp({
         label: { show: false }
       }));
 
-      this.chart.setOption({
+      inst.chart.setOption({
         series: [
           { name: 'K线', markLine: Object.assign({ data: priceLines }, extremeLine), markPoint: { data: [] } },
           { name: 'K', markPoint: { data: kdjMarks } }
@@ -731,6 +781,65 @@ createApp({
           { id: 'dateL', style: { text: labels[si] } },
           { id: 'dateR', style: { text: labels[ei] } }
         ]
+      });
+    },
+    // 图表实例存取（cut=截止周期图，latest=最新周期图）
+    _chartInst(key) {
+      if (!this._charts) this._charts = {};
+      if (!this._charts[key]) this._charts[key] = { chart: null, cd: null, raf: null };
+      return this._charts[key];
+    },
+    // 最新周期序列：以 periods[0] 为截止（与 /kdj/periods 口径一致），复用同一套渲染
+    async loadLatestChart(code) {
+      const latest = this.periods[0];
+      if (!latest) return;
+      const q = this.buildQuery();
+      q.set('code', code);
+      if (this.kdjType === '0') q.set('tradeDate', latest.tradeDate);
+      else if (this.kdjType === '1') { q.set('tradeDateMin', latest.tradeDateMin); q.set('tradeDateMax', latest.tradeDateMax); }
+      else if (this.kdjType === '2') q.set('tradeDate', latest.tradeDate);
+      else { q.set('tradeDateMin', latest.tradeDateMin); q.set('tradeDateMax', latest.tradeDateMax); }
+      try {
+        const rows = await getJson('/kdj/series?' + q.toString());
+        if (!rows.length) { this.disposeLatestChart(); return; }
+        this.renderChart(rows, { el: 'kdjChartLatest', key: 'latest' });
+      } catch (e) {
+        this.disposeLatestChart();
+      }
+    },
+    disposeLatestChart() {
+      const inst = this._charts && this._charts['latest'];
+      if (inst && inst.chart) inst.chart.dispose();
+      if (inst) inst.chart = null;
+    },
+    // 关闭全部图表（「点击查询后关闭」与切换周期类型共用）
+    closeCharts() {
+      if (this._charts) {
+        Object.keys(this._charts).forEach(k => {
+          const inst = this._charts[k];
+          if (inst && inst.chart) inst.chart.dispose();
+        });
+      }
+      this._charts = {};
+      this.chartStock = null;
+    },
+    // 「其他参数」localStorage 持久化
+    persistChartPrefs() {
+      localStorage.setItem('ts_close_chart_on_query', this.closeChartOnQuery ? '1' : '0');
+      localStorage.setItem('ts_show_latest_chart', this.showLatestChart ? '1' : '0');
+    },
+    onCloseChartPrefChange() {
+      this.persistChartPrefs();
+    },
+    onShowLatestPrefChange() {
+      this.persistChartPrefs();
+      if (!this.chartStock) return;
+      this.$nextTick(() => {
+        if (this.showLatestChart && this.latestChartVisible) {
+          this.loadLatestChart(this.chartStock.code);
+        } else {
+          this.disposeLatestChart();
+        }
       });
     }
   }

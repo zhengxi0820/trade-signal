@@ -35,7 +35,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 - 复权类型用 `adjust`："0"=无复权、"1"=前复权（默认）、"2"=后复权（预留）；板块用 `boardType`："0"=沪深主板、"1"=科创板、"2"=创业板、"3"=北交所。
 - 日期用三字段规则：日/月度 `tradeDate`(yyyymmdd)；周度 `tradeDateMin/tradeDateMax`(yyyymmdd)；季度 `tradeDateMin/tradeDateMax`(yyyymm)。入参出参结构一致，不引入新日期字段。
 - KDJ 值与金叉/死叉/交易位事件**不落库**，单票序列一律实时计算；全市场扫描有两层内存缓存（均按 `max(trade_date)` 水位自动失效，`POST /kdj/cache/refresh` 手动清空）：
-  - `ScanResultCache`（结果层）：三个扫描接口的最终列表，key = 接口 + 全部生效参数，命中毫秒级
+  - `ScanResultCache`（结果层）：三个扫描接口的最终列表，key = 接口 + 全部生效参数，命中毫秒级；**同 key 并发未命中时单飞共享一次计算**（防冷缓存并发风暴，2026-08-12 OOM 事故根因）
   - `ScanBarsCache`（bars 层）：每股票每周期的 132 根窗口 K 线（80 暖机 + 50 回看 + 2），key = code|adjust|kdjType（不含 n/m1/m2——递推全市场仅秒级，调参数只重递推不取数）；历史截止周期切前缀，切片 ≥ goldInternalMax+82 **或窗口未满（新股全历史已在窗口内）**才走缓存，否则按截止锚定重算不写缓存
 - 全市场扫描的行情加载：先批量装载（`ensureScanBarsLoaded`，每 200 只一条 SQL 按索引顺序读）；日线批量读窗口原始行（行即 bar），周/月/季读物化表 `stock_period_bar`（未启用时退回现场聚合兜底）。信号判定与全历史一致；单票 `/kdj/series` 仍查全历史，不要给它加窗口。
 - 金叉/死叉判断用端点严格不等，交汇点用 `KDJHandler.calcKdCrossValue`（附A 修正版），不要重造。

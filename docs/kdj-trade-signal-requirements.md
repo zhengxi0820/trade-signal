@@ -168,7 +168,7 @@ public CrossPoint calcKdCrossValue(BigDecimal preK, BigDecimal preD, BigDecimal 
   - **窗口裁剪**：交易位规则只回看最近两次金叉（间距 ≤ goldInternalMax），叠加 80 周期暖机后 KDJ 递推残差 < 1e-9，信号判定与全历史一致。
   - **SQL 预聚合**：月/季线周期 K 线由数据库侧 GROUP BY + 自连接直接产出（~43ms/股），日/周线走窗口日线 + Java 聚合。
   - **bars 缓存**：每股票每周期 132 根窗口 K 线（key=code|adjust|kdjType，不含 n/m1/m2——递推仅秒级，调参数只重递推不取数）；历史截止周期切前缀。
-  - **结果缓存**：三个扫描接口最终列表按「接口 + 全部生效参数」为 key，命中毫秒级。
+  - **结果缓存**：三个扫描接口最终列表按「接口 + 全部生效参数」为 key，命中毫秒级；同 key 并发未命中时**单飞共享一次计算**（防冷缓存并发风暴）。
   - 两层缓存均以 `max(trade_date)` 为水位自动失效，`POST /kdj/cache/refresh` 手动清空；不落库。
 
 ## 7. 非目标

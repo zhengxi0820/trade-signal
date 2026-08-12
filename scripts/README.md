@@ -59,7 +59,7 @@ python -m aggregate.period_bar
 python -m aggregate.period_bar --full
 # 服务器由 /etc/cron.d/trade-signal-daily 触发（每日 00:00 探针 + 3 天闸门，防新浪封 IP；wrapper run_daily.sh：
 # flock → 探针（无新数据/间隔不足跳过）→ fetch.new_stocks 新股维护 → 分片 0/2 ‖ 1/2 → finalize → adjust.workday
-# → aggregate.period_bar → warm_cache 预热，日志 daily.log）；另有每小时 ensure_period_bar.sh 物化自愈（与 run_daily 共用锁）；
+# → aggregate.period_bar → warm_cache 预热，日志 daily.log）；另有每小时 ensure_period_bar.sh 物化自愈（与 run_daily 共用锁）、每 10 分钟 ensure_warm.sh 重启自动预热（应用重启后自动触发 warm_cache，防并发用 .warm.lock）；
 # 东财行情口已退出生产（限流实录），公告日历保留
 ```
 

@@ -160,6 +160,14 @@
             <el-switch v-model="params.goldCrossLimit"></el-switch>
           </el-form-item>
 
+          <el-divider content-position="left">其他参数</el-divider>
+          <el-form-item label="点击查询后关闭KDJ和价格线图表" label-width="240px">
+            <el-switch v-model="closeChartOnQuery" @change="onCloseChartPrefChange"></el-switch>
+          </el-form-item>
+          <el-form-item label="查询历史周期时同步展示最新周期" label-width="240px">
+            <el-switch v-model="showLatestChart" @change="onShowLatestPrefChange"></el-switch>
+          </el-form-item>
+
           <el-divider content-position="left">行情口径</el-divider>
           <el-form-item label="复权类型">
             <el-radio-group v-model="params.adjust">
@@ -270,8 +278,14 @@
         <span class="period">{{ periodName }}</span>
       </div>
     </template>
-    <div id="kdjChart"></div>
-  </el-card>
+      <div class="chart-label"><b>截止周期</b>&nbsp;{{ cutoffPeriodLabel }}</div>
+      <div id="kdjChart"></div>
+      <template v-if="latestChartVisible">
+        <div class="chart-divider"></div>
+        <div class="chart-label"><b>最新周期</b>&nbsp;{{ latestPeriodLabel }}</div>
+        <div id="kdjChartLatest"></div>
+      </template>
+    </el-card>
 </div>
 
 <script src="/vendor/vue.global.prod.js"></script>

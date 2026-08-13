@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS stock_info (
     CODE        VARCHAR(16)   NOT NULL COMMENT '股票代码',
     NAME        VARCHAR(64)   DEFAULT NULL COMMENT '股票名称',
     MARKET      VARCHAR(8)    NOT NULL COMMENT '市场标识(SH/SZ/BJ，预留HK/US)',
-    BOARD_TYPE  CHAR(1)       NOT NULL COMMENT '板块：0=沪深主板 1=科创板 2=创业板 3=北交所',
+    BOARD_TYPE  CHAR(1)       NOT NULL COMMENT '板块：0=上交所主板 1=科创板 2=创业板 3=北交所 4=深交所主板',
     CREATED_AT  DECIMAL(15,0) DEFAULT NULL COMMENT '创建时间(UNIX秒)',
     UPDATED_AT  DECIMAL(15,0) DEFAULT NULL COMMENT '更新时间(UNIX秒)',
     PRIMARY KEY (ID),

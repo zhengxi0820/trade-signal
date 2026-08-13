@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>板块设置样式变体 — 交易位信号系统</title>
+<!--
+  原型（throwaway）：板块设置 popover 的三种勾选样式变体 + 参数设置改为同宽 popover。
+  ?variant=A|B|C 或底部条/左右方向键切换。
+  评估点：
+    1) 勾选控件形态：A 自定义勾选框（大徽标11px） / B 芯片多选（无勾选框） / C 开关式
+    2) 参数设置：从内嵌面板改为 230px 弹层（与板块设置同宽），label 在上、控件在下紧凑排布
+  口径：不带各板块股票数；纯前端过滤，不传后端。
+  演示规则：mock 数据，不接后端。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f4f8; color: #303133; }
+  button { cursor: pointer; border: none; background: none; font-family: inherit; }
+
+  #page { max-width: 1280px; margin: 0 auto; padding: 20px 24px 70px; }
+
+  .intro { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); padding: 14px 20px; margin-bottom: 14px; font-size: 13px; color: #606266; }
+  .intro b { color: #303133; }
+
+  .toolbar { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); padding: 14px 20px; margin-bottom: 16px; }
+  .nav-underline { display: flex; justify-content: center; gap: 36px; border-bottom: 1px solid #e4ebf3; margin-bottom: 14px; }
+  .nav-underline a { position: relative; padding: 6px 2px 10px; font-size: 15px; color: #7a93b0; cursor: pointer; text-decoration: none; }
+  .nav-underline a.on { color: #1a3a5c; font-weight: 600; }
+  .nav-underline a.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: #2b8fe8; border-radius: 2px; }
+
+  .selector-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .search { height: 32px; border: 1px solid #dcdfe6; border-radius: 4px; padding: 0 10px; font-size: 14px; background: #fff; width: 200px; }
+  .btn { height: 32px; padding: 0 16px; border-radius: 4px; font-size: 14px; }
+  .btn-plain { border: 1px solid #409eff; color: #409eff; background: #fff; }
+  .btn-primary { background: #409eff; color: #fff; }
+
+  /* 弹层通用 */
+  .pop { position: absolute; top: 40px; left: 0; z-index: 200; background: #fff;
+    border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 8px 28px rgba(30,60,120,.14); }
+  .pop[hidden] { display: none; }
+  .pop-wrap { position: relative; }
+  .pop-head { font-weight: 600; color: #303133; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+  .pop-head .quick { font-size: 12px; color: #409eff; cursor: pointer; font-weight: 400; }
+
+  /* ============ 变体 A：自定义勾选框 + 大徽标 ============ */
+  #popA { width: 230px; padding: 12px 16px; }
+  .opt-a { display: flex; align-items: center; gap: 9px; padding: 5px 0; cursor: pointer; user-select: none; font-size: 14px; }
+  .opt-a input { width: 16px; height: 16px; border-radius: 4px; accent-color: #409eff; cursor: pointer; margin: 0; }
+  .badge11 { box-sizing: border-box; display: inline-block; min-width: 17px; height: 16px; line-height: 16px;
+    padding: 0 4px; border-radius: 4px; font-size: 11px; font-weight: 600; text-align: center; color: #fff; }
+  .b-0 { background: #1f5fa8; } .b-1 { background: #2e9e5b; } .b-2 { background: #e8852e; }
+  .b-3 { background: #7d5bc6; } .b-4 { background: #c93c3c; }
+
+  /* ============ 变体 B：芯片多选（无勾选框） ============ */
+  #popB { width: 230px; padding: 12px 14px; }
+  .chip { display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin-bottom: 5px;
+    border-radius: 6px; border: 1px solid transparent; cursor: pointer; user-select: none; font-size: 14px; color: #909399; }
+  .chip:last-child { margin-bottom: 0; }
+  .chip .chk { margin-left: auto; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #c0c4cc;
+    display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; }
+  .chip.on { background: #f5f8ff; border-color: #d8e6ff; color: #303133; }
+  .chip.on .chk { background: #409eff; border-color: #409eff; }
+  .chip .badge11 { opacity: .45; }
+  .chip.on .badge11 { opacity: 1; }
+
+  /* ============ 变体 C：开关式 ============ */
+  #popC { width: 230px; padding: 12px 16px; }
+  .opt-c { display: flex; align-items: center; gap: 9px; padding: 5px 0; cursor: pointer; user-select: none; font-size: 14px; }
+  .switch { position: relative; width: 34px; height: 18px; border-radius: 9px; background: #dcdfe6; transition: background .18s; margin-left: auto; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; transition: left .18s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .switch.on { background: #409eff; }
+  .switch.on::after { left: 18px; }
+
+  .empty-tip { color: #909399; font-size: 12px; margin-top: 8px; }
+
+  /* ============ 参数设置 popover（230px 与板块设置同宽，label 在上控件在下） ============ */
+  #popParam { width: 230px; padding: 12px 16px; max-height: 480px; overflow-y: auto; }
+  .param-sec { font-size: 12px; color: #909399; font-weight: 600; margin: 10px 0 6px; }
+  .param-sec:first-child { margin-top: 0; }
+  .param-item { margin-bottom: 8px; }
+  .param-item label { display: block; font-size: 12px; color: #606266; margin-bottom: 3px; }
+  .param-item input[type=number], .param-item select { width: 100%; height: 30px; border: 1px solid #dcdfe6;
+    border-radius: 4px; padding: 0 8px; font-size: 13px; background: #fff; }
+  .switch-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #303133; }
+
+  .card { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); margin-bottom: 16px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center;
+    padding: 13px 20px; border-bottom: 1px solid #ebeef5; font-weight: 600; font-size: 15px; }
+  .card-head .count { color: #909399; font-weight: 400; font-size: 13px; }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th { text-align: left; color: #909399; font-weight: 500; padding: 10px 14px;
+    border-bottom: 1px solid #ebeef5; background: #fafafa; }
+  .table td { padding: 9px 14px; border-bottom: 1px solid #f0f2f5; font-variant-numeric: tabular-nums; }
+  .table td.num { text-align: right; }
+  .table .col-star { color: #ffb020; font-size: 15px; cursor: pointer; }
+  .x-badge { box-sizing: border-box; display: inline-block; min-width: 15px; height: 14px; line-height: 14px;
+    padding: 0 3px; margin-left: 5px; border-radius: 3px; font-size: 9px; font-weight: 600; text-align: center;
+    color: #fff; vertical-align: 2px; }
+  .x-0 { background: #1f5fa8; } .x-1 { background: #2e9e5b; } .x-2 { background: #e8852e; }
+  .x-3 { background: #7d5bc6; } .x-4 { background: #c93c3c; }
+
+  /* 底部变体切换条 */
+  .vbar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 500;
+    display: flex; gap: 8px; background: #fff; border: 1px solid #e4e7ed; border-radius: 20px;
+    box-shadow: 0 6px 24px rgba(30,60,120,.16); padding: 6px 10px; }
+  .vbar button { padding: 5px 14px; border-radius: 14px; font-size: 13px; color: #606266; }
+  .vbar button.on { background: #409eff; color: #fff; }
+</style>
+</head>
+<body>
+<div id="page">
+  <div class="intro">
+    变体 <b id="varLabel">A</b>：自定义勾选框 + 大徽标（11px）｜<b>B</b>：芯片多选（无勾选框）｜<b>C</b>：开关式
+    —— 三个变体均不带股票数；「参数设置」已改为 230px 弹层与板块设置同宽。左右方向键或底部条切换。
+  </div>
+
+  <div class="toolbar">
+    <nav class="nav-underline">
+      <a class="on">全市场</a><a>我的自选</a>
+    </nav>
+    <div class="selector-row">
+      <input class="search" placeholder="代码 / 名称筛选">
+      <div class="pop-wrap">
+        <button class="btn btn-plain" onclick="togglePop('popA')">板块设置</button>
+        <div class="pop" id="popA" hidden>
+          <div class="pop-head">显示板块 <span class="quick" onclick="toggleAll('A')">全选/清空</span></div>
+          <div class="opt-a" data-bt="0"><input type="checkbox"><span class="badge11 b-0">沪</span>上交所主板</div>
+          <div class="opt-a" data-bt="1"><input type="checkbox"><span class="badge11 b-1">科</span>科创板</div>
+          <div class="opt-a" data-bt="2"><input type="checkbox"><span class="badge11 b-2">创</span>创业板</div>
+          <div class="opt-a" data-bt="3"><input type="checkbox"><span class="badge11 b-3">北</span>北交所</div>
+          <div class="opt-a" data-bt="4"><input type="checkbox"><span class="badge11 b-4">深</span>深交所主板</div>
+          <div class="empty-tip" id="tipA" hidden>未勾选任何板块，列表将为空</div>
+        </div>
+        <div class="pop" id="popB" hidden>
+          <div class="pop-head">显示板块 <span class="quick" onclick="toggleAll('B')">全选/清空</span></div>
+          <div class="chip" data-bt="0"><span class="badge11 b-0">沪</span>上交所主板<span class="chk"></span></div>
+          <div class="chip" data-bt="1"><span class="badge11 b-1">科</span>科创板<span class="chk"></span></div>
+          <div class="chip" data-bt="2"><span class="badge11 b-2">创</span>创业板<span class="chk"></span></div>
+          <div class="chip" data-bt="3"><span class="badge11 b-3">北</span>北交所<span class="chk"></span></div>
+          <div class="chip" data-bt="4"><span class="badge11 b-4">深</span>深交所主板<span class="chk"></span></div>
+          <div class="empty-tip" id="tipB" hidden>未勾选任何板块，列表将为空</div>
+        </div>
+        <div class="pop" id="popC" hidden>
+          <div class="pop-head">显示板块 <span class="quick" onclick="toggleAll('C')">全选/清空</span></div>
+          <div class="opt-c" data-bt="0"><span class="badge11 b-0">沪</span>上交所主板<span class="switch"></span></div>
+          <div class="opt-c" data-bt="1"><span class="badge11 b-1">科</span>科创板<span class="switch"></span></div>
+          <div class="opt-c" data-bt="2"><span class="badge11 b-2">创</span>创业板<span class="switch"></span></div>
+          <div class="opt-c" data-bt="3"><span class="badge11 b-3">北</span>北交所<span class="switch"></span></div>
+          <div class="opt-c" data-bt="4"><span class="badge11 b-4">深</span>深交所主板<span class="switch"></span></div>
+          <div class="empty-tip" id="tipC" hidden>未勾选任何板块，列表将为空</div>
+        </div>
+      </div>
+      <div class="pop-wrap">
+        <button class="btn btn-plain" onclick="togglePop('popParam')">参数设置</button>
+        <div class="pop" id="popParam" hidden>
+          <div class="param-sec">KDJ 参数</div>
+          <div class="param-item"><label>N（RSV 窗口）</label><input type="number" value="9"></div>
+          <div class="param-item"><label>M1（K 平滑）</label><input type="number" value="3"></div>
+          <div class="param-item"><label>M2（D 平滑）</label><input type="number" value="3"></div>
+          <div class="param-sec">信号限制项</div>
+          <div class="param-item"><label>上次金叉交汇上限</label><input type="number" value="20"></div>
+          <div class="param-item"><label>当前金叉交汇上限</label><input type="number" value="50"></div>
+          <div class="param-item"><label>死叉交汇上限</label><input type="number" value="50"></div>
+          <div class="param-item"><label>金叉最小间距</label><input type="number" value="5"></div>
+          <div class="param-item"><label>金叉最大间距</label><input type="number" value="15"></div>
+          <div class="param-item"><div class="switch-row">收盘价更低<span class="switch on"></span></div></div>
+          <div class="param-item"><div class="switch-row">交汇点更高<span class="switch on"></span></div></div>
+          <div class="param-sec">其他参数</div>
+          <div class="param-item"><div class="switch-row">查询后关闭图表<span class="switch"></span></div></div>
+          <div class="param-item"><div class="switch-row">同步展示最新周期<span class="switch on"></span></div></div>
+          <div class="param-sec">行情口径</div>
+          <div class="param-item"><label>复权类型</label>
+            <select><option>前复权</option><option>后复权</option><option>不复权</option></select></div>
+        </div>
+      </div>
+      <button class="btn btn-primary">查询</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span>所有股票</span> <span class="count" id="allCount"></span></div>
+    <table class="table"><thead><tr>
+      <th style="width:44px"></th><th style="width:120px">代码</th><th style="width:110px">名称</th>
+      <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+    </tr></thead><tbody id="allBody"></tbody></table>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span>金叉股票</span> <span class="count" id="goldCount"></span></div>
+    <table class="table"><thead><tr>
+      <th style="width:44px"></th><th style="width:120px">代码</th><th style="width:110px">名称</th>
+      <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+    </tr></thead><tbody id="goldBody"></tbody></table>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span>交易位股票</span> <span class="count" id="signalCount"></span></div>
+    <table class="table"><thead><tr>
+      <th style="width:44px"></th><th style="width:120px">代码</th><th style="width:110px">名称</th>
+      <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+    </tr></thead><tbody id="signalBody"></tbody></table>
+  </div>
+</div>
+
+<div class="vbar">
+  <button class="on" onclick="setV('A')">A 勾选框+大徽标</button>
+  <button onclick="setV('B')">B 芯片多选</button>
+  <button onclick="setV('C')">C 开关式</button>
+</div>
+
+<script>
+const ALL = [
+  { code: '600519', name: '贵州茅台', bt: '0', close: 1425.32, k: 72.14, d: 68.90, j: 78.62, cross: null },
+  { code: '000002', name: '万科A', bt: '4', close: 9.87, k: 55.20, d: 51.44, j: 62.72, cross: null },
+  { code: '688981', name: '中芯国际', bt: '1', close: 68.21, k: 48.75, d: 50.11, j: 46.03, cross: null },
+  { code: '300750', name: '宁德时代', bt: '2', close: 251.40, k: 63.30, d: 59.82, j: 70.26, cross: null },
+  { code: '920185', name: '贝特瑞', bt: '3', close: 21.75, k: 44.90, d: 46.35, j: 42.00, cross: null },
+  { code: '601318', name: '中国平安', bt: '0', close: 52.63, k: 51.22, d: 53.10, j: 47.46, cross: null },
+  { code: '000858', name: '五粮液', bt: '4', close: 128.90, k: 58.44, d: 54.20, j: 66.92, cross: null },
+  { code: '830799', name: '艾融软件', bt: '3', close: 12.38, k: 60.05, d: 57.72, j: 64.71, cross: null },
+  { code: '688111', name: '金山办公', bt: '1', close: 301.20, k: 52.30, d: 46.12, j: 64.66, cross: 48.71 },
+  { code: '300059', name: '东方财富', bt: '2', close: 18.42, k: 61.05, d: 55.30, j: 72.55, cross: 49.10 },
+  { code: '600036', name: '招商银行', bt: '0', close: 35.88, k: 66.44, d: 61.02, j: 77.28, cross: 47.66 },
+  { code: '000333', name: '美的集团', bt: '4', close: 62.15, k: 54.78, d: 50.33, j: 63.68, cross: 45.92 },
+  { code: '920002', name: '万达轴承', bt: '3', close: 19.66, k: 59.87, d: 57.10, j: 65.41, cross: 50.02 },
+];
+const GOLD = ALL.filter(s => s.cross);
+const SIGNAL = GOLD.slice(0, 2);
+const TEXT = { '0': '沪', '1': '科', '2': '创', '3': '北', '4': '深' };
+const state = { sel: new Set(['0', '1', '2', '3', '4']), variant: 'A' };
+
+function badge(bt) {
+  return '<span class="x-badge x-' + bt + '">' + TEXT[bt] + '</span>';
+}
+function rowHtml(s) {
+  return '<tr><td class="col-star">☆</td><td>' + s.code + badge(s.bt) + '</td><td>' + s.name + '</td>'
+    + '<td class="num">' + s.close.toFixed(2) + '</td><td class="num">' + s.k.toFixed(2) + '</td>'
+    + '<td class="num">' + s.d.toFixed(2) + '</td><td class="num">' + s.j.toFixed(2) + '</td>'
+    + '<td class="num">' + (s.cross == null ? '—' : s.cross.toFixed(2)) + '</td></tr>';
+}
+function filtered(list) {
+  return state.sel.size === 5 ? list : list.filter(s => state.sel.has(s.bt));
+}
+function render() {
+  const all = filtered(ALL), gold = filtered(GOLD), sig = filtered(SIGNAL);
+  document.getElementById('allCount').textContent = '共 ' + all.length + ' 只';
+  document.getElementById('goldCount').textContent = '共 ' + gold.length + ' 只';
+  document.getElementById('signalCount').textContent = '共 ' + sig.length + ' 只';
+  document.getElementById('allBody').innerHTML = all.map(rowHtml).join('');
+  document.getElementById('goldBody').innerHTML = gold.map(rowHtml).join('');
+  document.getElementById('signalBody').innerHTML = sig.map(rowHtml).join('');
+  syncPop();
+}
+function syncPop() {
+  document.querySelectorAll('#popA .opt-a').forEach(o => {
+    o.querySelector('input').checked = state.sel.has(o.dataset.bt);
+  });
+  document.querySelectorAll('#popB .chip').forEach(c => {
+    c.classList.toggle('on', state.sel.has(c.dataset.bt));
+    c.querySelector('.chk').textContent = state.sel.has(c.dataset.bt) ? '✓' : '';
+  });
+  document.querySelectorAll('#popC .opt-c').forEach(o => {
+    o.querySelector('.switch').classList.toggle('on', state.sel.has(o.dataset.bt));
+  });
+  ['A', 'B', 'C'].forEach(v => {
+    document.getElementById('tip' + v).hidden = state.sel.size > 0;
+  });
+}
+function toggleAll(v) {
+  const allOn = state.sel.size === 5;
+  state.sel = allOn ? new Set() : new Set(['0', '1', '2', '3', '4']);
+  syncPop();
+  render();
+}
+function togglePop(id) {
+  const pop = document.getElementById(id);
+  pop.hidden = !pop.hidden;
+}
+document.addEventListener('click', e => {
+  const cb = e.target.closest('#popA .opt-a');
+  if (cb) {
+    state.sel.has(cb.dataset.bt) ? state.sel.delete(cb.dataset.bt) : state.sel.add(cb.dataset.bt);
+    cb.querySelector('input').checked = state.sel.has(cb.dataset.bt);
+    syncPop(); render();
+  }
+  document.querySelectorAll('.pop').forEach(p => {
+    if (!p.hidden && !e.target.closest('.pop-wrap') && !e.target.closest('.pop')) p.hidden = true;
+  });
+  const chip = e.target.closest('.chip');
+  if (chip) {
+    state.sel.has(chip.dataset.bt) ? state.sel.delete(chip.dataset.bt) : state.sel.add(chip.dataset.bt);
+    syncPop(); render();
+  }
+  const sw = e.target.closest('#popC .opt-c');
+  if (sw) {
+    state.sel.has(sw.dataset.bt) ? state.sel.delete(sw.dataset.bt) : state.sel.add(sw.dataset.bt);
+    syncPop(); render();
+  }
+});
+function setV(v) {
+  state.variant = v;
+  document.getElementById('varLabel').textContent = v;
+  document.querySelectorAll('.vbar button').forEach((b, i) => b.classList.toggle('on', 'ABC'[i] === v));
+  document.querySelectorAll('.pop').forEach(p => p.hidden = true);
+  document.getElementById('pop' + v).hidden = false;
+  syncPop();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft') setV(state.variant === 'A' ? 'C' : 'ABC'['ABC'.indexOf(state.variant) - 1]);
+  if (e.key === 'ArrowRight') setV(state.variant === 'C' ? 'A' : 'ABC'['ABC'.indexOf(state.variant) + 1]);
+});
+render();
+</script>
+</body>
+</html>

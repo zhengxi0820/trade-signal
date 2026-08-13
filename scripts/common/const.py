@@ -8,11 +8,12 @@ ADJUST_NONE = "0"   # 无复权（爬取原始行，只追加）
 ADJUST_QFQ = "1"    # 前复权（因子反推自算，可重算覆盖）
 ADJUST_HFQ = "2"    # 后复权（预留，当前不使用）
 
-# ---- stock_info.BOARD_TYPE 枚举 ----
-BOARD_MAIN = "0"        # 沪深主板
+# ---- stock_info.BOARD_TYPE 枚举（2026-08-13 字典变更：主板拆分沪/深，1/2/3 不变）----
+BOARD_SH_MAIN = "0"     # 上交所主板（原「沪深主板」沪部分，值不变、语义收窄）
 BOARD_STAR = "1"        # 科创板
 BOARD_CHINEXT = "2"     # 创业板
 BOARD_BSE = "3"         # 北交所
+BOARD_SZ_MAIN = "4"     # 深交所主板（新值，从原 0 拆出）
 
 # ---- 市场标识（stock_info.MARKET）----
 MARKET_SH = "SH"
@@ -76,9 +77,10 @@ K_CROSSCHECK_TOL = 0.005
 MAX_EVENTS_PER_YEAR = 3
 
 
-def board_type_of(code: str) -> str:
-    """按代码前缀推导板块（全市场统一规则，不看 code 来自哪个接口）：
-    688 → 科创板；300/301/302 → 创业板；4xx/8xx/92x → 北交所；其余 → 主板。
+def board_type_of(market: str, code: str) -> str:
+    """按市场 + 代码前缀推导板块（全市场统一规则，不看 code 来自哪个接口）：
+    688 → 科创板；300/301/302 → 创业板；4xx/8xx/92x → 北交所；
+    其余主板按 market 拆沪/深（SH→0、SZ→4）。
     """
     if code.startswith("688"):
         return BOARD_STAR
@@ -86,4 +88,4 @@ def board_type_of(code: str) -> str:
         return BOARD_CHINEXT
     if code[0] in ("4", "8") or code.startswith("92"):
         return BOARD_BSE
-    return BOARD_MAIN
+    return BOARD_SH_MAIN if market == MARKET_SH else BOARD_SZ_MAIN

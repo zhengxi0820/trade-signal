@@ -76,7 +76,7 @@ def main() -> int:
             return 0
         for market, code, name in todo:
             tag = "新增" if (market, code, name) in new else "自愈(已登记无行情)"
-            print(f"[new] {tag}: {market}:{code} {name} board_type='{board_type_of(code)}' "
+            print(f"[new] {tag}: {market}:{code} {name} board_type='{board_type_of(market, code)}' "
                   f"→ 全历史回填(years={BACKFILL_YEARS}) + 登记 stock_info")
 
         if args.dry_run:

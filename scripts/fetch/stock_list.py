@@ -87,7 +87,7 @@ def upsert_stock_info(stocks: list) -> int:
         ON DUPLICATE KEY UPDATE NAME=VALUES(NAME), BOARD_TYPE=VALUES(BOARD_TYPE), UPDATED_AT=VALUES(UPDATED_AT)
     """
     params = [
-        (info_id(market, code), code, name, market, board_type_of(code), now, now)
+        (info_id(market, code), code, name, market, board_type_of(market, code), now, now)
         for market, code, name in stocks
     ]
     conn = get_conn()
@@ -110,7 +110,7 @@ def main() -> int:
     by_board = {}
     for market, code, _ in stocks:
         by_market[market] = by_market.get(market, 0) + 1
-        b = board_type_of(code)
+        b = board_type_of(market, code)
         by_board[b] = by_board.get(b, 0) + 1
     print(f"[stock_list] 共 {n} 只入 stock_info；按市场 {by_market}；按板块 {by_board}")
     return 0

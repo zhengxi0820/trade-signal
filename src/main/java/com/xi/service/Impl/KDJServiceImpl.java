@@ -655,6 +655,7 @@ public class KDJServiceImpl implements KDJService {
         if (info != null) {
             vo.setName(info.getName());
             vo.setMarket(info.getMarket());
+            vo.setBoardType(info.getBoardType());
         }
         vo.setOpen(lastBar.open);
         vo.setHigh(lastBar.high);

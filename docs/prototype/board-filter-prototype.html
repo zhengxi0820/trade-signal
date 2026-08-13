@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>板块设置原型 — 交易位信号系统</title>
+<!--
+  原型（throwaway）：工具栏新增「板块设置」，按 boardType 过滤四个列表（所有股票/我的自选/金叉/交易位）。
+  评估点：
+    1) 入口放工具栏（搜索框与查询按钮之间）是否合适
+    2) popover 内五板块带徽标勾选的可读性；全不选时列表为空的提示
+    3) 默认全选 = 不过滤（含 boardType 为空的股票）；取消任一板块后仅显示勾选板块
+  交互口径（与生产一致）：纯前端过滤，勾选状态不传后端，查询请求不变。
+  演示规则：mock 数据，不接后端；页签「我的自选」按星标过滤。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f4f8; color: #303133; }
+  button { cursor: pointer; border: none; background: none; font-family: inherit; }
+
+  #page { max-width: 1280px; margin: 0 auto; padding: 20px 24px 60px; }
+
+  .intro { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); padding: 16px 22px; margin-bottom: 16px; font-size: 14px; }
+  .intro h1 { font-size: 17px; margin-bottom: 8px; }
+  .intro p { color: #606266; font-size: 13px; line-height: 1.8; }
+  .intro code { background: #f4f6f8; border-radius: 3px; padding: 1px 5px; font-size: 12px; }
+
+  .toolbar { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); padding: 14px 20px; margin-bottom: 16px; }
+  .nav-underline { display: flex; justify-content: center; gap: 36px; border-bottom: 1px solid #e4ebf3; margin-bottom: 14px; }
+  .nav-underline a { position: relative; padding: 6px 2px 10px; font-size: 15px; color: #7a93b0; cursor: pointer; text-decoration: none; }
+  .nav-underline a.on { color: #1a3a5c; font-weight: 600; }
+  .nav-underline a.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: #2b8fe8; border-radius: 2px; }
+
+  .selector-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .search { height: 32px; border: 1px solid #dcdfe6; border-radius: 4px; padding: 0 10px; font-size: 14px; background: #fff; width: 200px; }
+  .btn { height: 32px; padding: 0 16px; border-radius: 4px; font-size: 14px; }
+  .btn-plain { border: 1px solid #409eff; color: #409eff; background: #fff; }
+  .btn-primary { background: #409eff; color: #fff; }
+
+  /* 板块设置 popover */
+  .board-wrap { position: relative; }
+  .board-pop { position: absolute; top: 40px; left: 0; z-index: 100; width: 220px;
+    background: #fff; border: 1px solid #e4e7ed; border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(30,60,120,.14); padding: 10px 14px; font-size: 13px; }
+  .board-pop[hidden] { display: none; }
+  .board-pop .title { font-weight: 600; color: #303133; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+  .board-pop .quick { font-size: 12px; color: #409eff; cursor: pointer; }
+  .board-opt { display: flex; align-items: center; gap: 8px; padding: 5px 2px; cursor: pointer; user-select: none; }
+  .board-opt:hover { background: #f5f9ff; }
+  .board-opt input { width: 15px; height: 15px; accent-color: #409eff; cursor: pointer; }
+  .board-opt .cnt { margin-left: auto; color: #a8abb2; font-size: 12px; }
+  .board-empty-tip { color: #909399; font-size: 12px; margin-top: 4px; }
+
+  /* 徽标（与线上一致：border-box 15×14 / 9px 字） */
+  .x-badge { box-sizing: border-box; display: inline-block; min-width: 15px; height: 14px; line-height: 14px;
+    padding: 0 3px; margin-left: 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 600; text-align: center; color: #fff; vertical-align: 2px; }
+  .x-0 { background: #1f5fa8; } .x-1 { background: #2e9e5b; } .x-2 { background: #e8852e; }
+  .x-3 { background: #7d5bc6; } .x-4 { background: #c93c3c; }
+  .dict-badge { display: inline-block; min-width: 15px; height: 14px; line-height: 14px;
+    padding: 0 3px; border-radius: 3px; font-size: 9px; font-weight: 600; text-align: center; color: #fff; }
+
+  .card { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); margin-bottom: 16px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center;
+    padding: 13px 20px; border-bottom: 1px solid #ebeef5; font-weight: 600; font-size: 15px; }
+  .card-head .count { color: #909399; font-weight: 400; font-size: 13px; }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th { text-align: left; color: #909399; font-weight: 500; padding: 10px 14px;
+    border-bottom: 1px solid #ebeef5; background: #fafafa; }
+  .table td { padding: 9px 14px; border-bottom: 1px solid #f0f2f5; font-variant-numeric: tabular-nums; }
+  .table td.num { text-align: right; }
+  .table .col-star { color: #ffb020; font-size: 15px; cursor: pointer; }
+  .table tr.dim td { color: #c0c4cc; }
+</style>
+</head>
+<body>
+<div id="page">
+  <div class="intro">
+    <h1>板块设置（纯前端过滤）— 方案原型</h1>
+    <p>
+      工具栏新增「板块设置」按钮：popover 内按 <code>boardType</code> 勾选 沪/科/创/北/深，默认全选（= 不过滤）。
+      勾选状态只存在前端，<b>不传后端</b>，查询请求与后端逻辑完全不变；四个列表（所有股票 / 我的自选 / 金叉 / 交易位）实时同步过滤。
+      全不选时列表为空并提示「未勾选任何板块」。
+    </p>
+  </div>
+
+  <div class="toolbar">
+    <nav class="nav-underline">
+      <a :class="page === 'all' ? 'on' : ''" onclick="setPage('all')">全市场</a>
+      <a :class="page === 'fav' ? 'on' : ''" onclick="setPage('fav')">我的自选</a>
+    </nav>
+    <div class="selector-row">
+      <input class="search" placeholder="代码 / 名称筛选" oninput="setKw(this.value)">
+      <div class="board-wrap">
+        <button class="btn btn-plain" onclick="toggleBoardPop(event)">板块设置</button>
+        <div class="board-pop" id="boardPop" hidden>
+          <div class="title">显示板块 <span class="quick" onclick="toggleAll()">全选/清空</span></div>
+          <label class="board-opt"><input type="checkbox" data-bt="0" onchange="applyFilter()"><span class="dict-badge x-0">沪</span>上交所主板<span class="cnt" id="cnt0"></span></label>
+          <label class="board-opt"><input type="checkbox" data-bt="1" onchange="applyFilter()"><span class="dict-badge x-1">科</span>科创板<span class="cnt" id="cnt1"></span></label>
+          <label class="board-opt"><input type="checkbox" data-bt="2" onchange="applyFilter()"><span class="dict-badge x-2">创</span>创业板<span class="cnt" id="cnt2"></span></label>
+          <label class="board-opt"><input type="checkbox" data-bt="3" onchange="applyFilter()"><span class="dict-badge x-3">北</span>北交所<span class="cnt" id="cnt3"></span></label>
+          <label class="board-opt"><input type="checkbox" data-bt="4" onchange="applyFilter()"><span class="dict-badge x-4">深</span>深交所主板<span class="cnt" id="cnt4"></span></label>
+          <div class="board-empty-tip" id="boardTip" hidden>未勾选任何板块，列表将为空</div>
+        </div>
+      </div>
+      <button class="btn btn-primary">查询</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head" id="allHead"><span id="allTitle">所有股票</span> <span class="count" id="allCount"></span></div>
+    <table class="table"><thead><tr>
+      <th style="width:44px"></th><th style="width:120px">代码</th><th style="width:110px">名称</th>
+      <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+    </tr></thead><tbody id="allBody"></tbody></table>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span>金叉股票</span> <span class="count" id="goldCount"></span></div>
+    <table class="table"><thead><tr>
+      <th style="width:44px"></th><th style="width:120px">代码</th><th style="width:110px">名称</th>
+      <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+    </tr></thead><tbody id="goldBody"></tbody></table>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span>交易位股票</span> <span class="count" id="signalCount"></span></div>
+    <table class="table"><thead><tr>
+      <th style="width:44px"></th><th style="width:120px">代码</th><th style="width:110px">名称</th>
+      <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+    </tr></thead><tbody id="signalBody"></tbody></table>
+  </div>
+</div>
+
+<script>
+// mock：boardType 字典 0=沪主板 1=科创板 2=创业板 3=北交所 4=深主板
+const ALL = [
+  { code: '600519', name: '贵州茅台', bt: '0', close: 1425.32, k: 72.14, d: 68.90, j: 78.62, cross: null },
+  { code: '000002', name: '万科A', bt: '4', close: 9.87, k: 55.20, d: 51.44, j: 62.72, cross: null },
+  { code: '688981', name: '中芯国际', bt: '1', close: 68.21, k: 48.75, d: 50.11, j: 46.03, cross: null },
+  { code: '300750', name: '宁德时代', bt: '2', close: 251.40, k: 63.30, d: 59.82, j: 70.26, cross: null },
+  { code: '920185', name: '贝特瑞', bt: '3', close: 21.75, k: 44.90, d: 46.35, j: 42.00, cross: null },
+  { code: '601318', name: '中国平安', bt: '0', close: 52.63, k: 51.22, d: 53.10, j: 47.46, cross: null },
+  { code: '000858', name: '五粮液', bt: '4', close: 128.90, k: 58.44, d: 54.20, j: 66.92, cross: null },
+  { code: '830799', name: '艾融软件', bt: '3', close: 12.38, k: 60.05, d: 57.72, j: 64.71, cross: null },
+  { code: '688111', name: '金山办公', bt: '1', close: 301.20, k: 52.30, d: 46.12, j: 64.66, cross: 48.71 },
+  { code: '300059', name: '东方财富', bt: '2', close: 18.42, k: 61.05, d: 55.30, j: 72.55, cross: 49.10 },
+  { code: '600036', name: '招商银行', bt: '0', close: 35.88, k: 66.44, d: 61.02, j: 77.28, cross: 47.66 },
+  { code: '000333', name: '美的集团', bt: '4', close: 62.15, k: 54.78, d: 50.33, j: 63.68, cross: 45.92 },
+  { code: '920002', name: '万达轴承', bt: '3', close: 19.66, k: 59.87, d: 57.10, j: 65.41, cross: 50.02 },
+];
+const GOLD = ALL.filter(s => s.cross);
+const SIGNAL = GOLD.slice(0, 2);
+const TEXT = { '0': '沪', '1': '科', '2': '创', '3': '北', '4': '深' };
+
+const state = { page: 'all', kw: '', favs: new Set(['600519', '688981']), board: new Set(['0', '1', '2', '3', '4']) };
+
+function badge(bt) {
+  const t = TEXT[bt];
+  return t ? '<span class="x-badge x-' + bt + '">' + t + '</span>' : '';
+}
+function rowHtml(s, star) {
+  return '<tr><td class="col-star">' + (star ? '★' : '☆') + '</td>'
+    + '<td>' + s.code + badge(s.bt) + '</td><td>' + s.name + '</td>'
+    + '<td class="num">' + s.close.toFixed(2) + '</td><td class="num">' + s.k.toFixed(2) + '</td>'
+    + '<td class="num">' + s.d.toFixed(2) + '</td><td class="num">' + s.j.toFixed(2) + '</td>'
+    + '<td class="num">' + (s.cross == null ? '—' : s.cross.toFixed(2)) + '</td></tr>';
+}
+function baseFilter(list) {
+  let r = state.page === 'fav' ? list.filter(s => state.favs.has(s.code)) : list;
+  if (state.kw) r = r.filter(s => s.code.includes(state.kw) || s.name.includes(state.kw));
+  // 板块过滤：全选 = 不过滤（含未知）；否则只显示勾选板块
+  if (state.board.size === 5) return r;
+  return r.filter(s => state.board.has(s.bt));
+}
+function render() {
+  const all = baseFilter(ALL), gold = baseFilter(GOLD), sig = baseFilter(SIGNAL);
+  document.getElementById('allTitle').textContent = state.page === 'fav' ? '我的自选' : '所有股票';
+  document.getElementById('allCount').textContent = '共 ' + all.length + ' 只';
+  document.getElementById('goldCount').textContent = '共 ' + gold.length + ' 只';
+  document.getElementById('signalCount').textContent = '共 ' + sig.length + ' 只';
+  document.getElementById('allBody').innerHTML = all.map(s => rowHtml(s, state.favs.has(s.code))).join('');
+  document.getElementById('goldBody').innerHTML = gold.map(s => rowHtml(s, state.favs.has(s.code))).join('');
+  document.getElementById('signalBody').innerHTML = sig.map(s => rowHtml(s, state.favs.has(s.code))).join('');
+  for (const bt of ['0', '1', '2', '3', '4']) {
+    const n = ALL.filter(s => s.bt === bt).length;
+    document.getElementById('cnt' + bt).textContent = n + ' 只';
+  }
+  document.querySelectorAll('.nav-underline a').forEach(a => a.classList.toggle('on', a.textContent === (state.page === 'fav' ? '我的自选' : '全市场')));
+}
+function setPage(p) { state.page = p; render(); }
+function setKw(v) { state.kw = v.trim(); render(); }
+function toggleBoardPop(e) {
+  e.stopPropagation();
+  const pop = document.getElementById('boardPop');
+  pop.hidden = !pop.hidden;
+  if (!pop.hidden) {
+    document.querySelectorAll('.board-opt input').forEach(c => { c.checked = state.board.has(c.dataset.bt); });
+    document.getElementById('boardTip').hidden = state.board.size > 0;
+  }
+}
+function applyFilter() {
+  state.board = new Set(Array.from(document.querySelectorAll('.board-opt input')).filter(c => c.checked).map(c => c.dataset.bt));
+  document.getElementById('boardTip').hidden = state.board.size > 0;
+  render();
+}
+function toggleAll() {
+  const allOn = document.querySelectorAll('.board-opt input').length === state.board.size;
+  document.querySelectorAll('.board-opt input').forEach(c => { c.checked = !allOn; });
+  applyFilter();
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.board-wrap')) document.getElementById('boardPop').hidden = true;
+});
+document.addEventListener('click', e => {
+  const star = e.target.closest('.col-star');
+  if (star) {
+    const code = star.closest('tr').querySelector('td:nth-child(2)').textContent.trim().slice(0, 6);
+    state.favs.has(code) ? state.favs.delete(code) : state.favs.add(code);
+    render();
+  }
+});
+render();
+</script>
+</body>
+</html>

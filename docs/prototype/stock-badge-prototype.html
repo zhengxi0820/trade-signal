@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>股票徽标原型 — 交易位信号系统</title>
+<!--
+  原型（throwaway）：三个列表「代码」列在代码后追加挂牌徽标（沪/深/科/创/北）。
+  评估点：
+    1) 徽标颜色/形状五类是否一眼可区分
+    2) 放在代码后（用户指定）视觉是否顺；列宽是否够
+    3) 后端新增字段字典（1-5）与前端映射是否直观
+  数据口径（方案）：复用 stock_info.BOARD_TYPE，变更字典拆分沪深主板：
+    0=上交所主板(沪) 1=科创板(科) 2=创业板(创) 3=北交所(北) 4=深交所主板(深)；
+    scripts 的 board_type_of(market, code) 推导维护；扫描出参 CrossStockVO 带 boardType。
+  演示规则：mock 数据，不接后端。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f4f8; color: #303133; }
+
+  #page { max-width: 1280px; margin: 0 auto; padding: 20px 24px 60px; }
+
+  .intro { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); padding: 18px 22px; margin-bottom: 18px; font-size: 14px; }
+  .intro h1 { font-size: 17px; margin-bottom: 10px; }
+  .intro .dict { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 10px; }
+  .intro .item { display: inline-flex; align-items: center; gap: 6px; color: #606266; font-size: 13px; }
+  .intro .note { color: #909399; font-size: 13px; margin-top: 10px; line-height: 1.7; }
+
+  .card { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); margin-bottom: 16px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center;
+    padding: 13px 20px; border-bottom: 1px solid #ebeef5; font-weight: 600; font-size: 15px; }
+  .card-head .count { color: #909399; font-weight: 400; font-size: 13px; }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th { text-align: left; color: #909399; font-weight: 500; padding: 10px 14px;
+    border-bottom: 1px solid #ebeef5; background: #fafafa; }
+  .table td { padding: 9px 14px; border-bottom: 1px solid #f0f2f5; font-variant-numeric: tabular-nums; }
+  .table tr:hover td { background: #f5f9ff; }
+  .table td.num { text-align: right; }
+  .table .col-star { color: #ffb020; font-size: 15px; cursor: pointer; }
+
+  /* ---- 徽标（五类，颜色互不撞色） ---- */
+  /* 徽标尺寸 = 上一版 18px 的 80%（14px 高 / 9px 字） */
+  .badge { display: inline-block; min-width: 15px; height: 14px; line-height: 14px;
+    padding: 0 3px; margin-left: 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 600; text-align: center; color: #fff; vertical-align: 2px; }
+  .b-hu  { background: #1f5fa8; }  /* 上交所主板 */
+  .b-shen{ background: #c93c3c; }  /* 深交所主板 */
+  .b-ke  { background: #2e9e5b; }  /* 科创板 */
+  .b-chuang { background: #e8852e; } /* 创业板 */
+  .b-bei { background: #7d5bc6; }  /* 北交所 */
+
+  .dict-badge { display: inline-block; min-width: 15px; height: 14px; line-height: 14px;
+    padding: 0 3px; border-radius: 3px; font-size: 9px; font-weight: 600; text-align: center;
+    color: #fff; }
+
+  .pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+    padding: 12px 18px; font-size: 13px; color: #606266; }
+  .pager .btn { border: 1px solid #dcdfe6; background: #fff; color: #606266;
+    border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+  .pager .btn.on { background: #409eff; border-color: #409eff; color: #fff; }
+</style>
+</head>
+<body>
+<div id="page">
+  <div class="intro">
+    <h1>股票列表「代码」列挂牌徽标 — 方案原型</h1>
+    <div>
+      徽标显示在代码后，共五类；数据由 <b>stock_info.BOARD_TYPE</b>（CHAR(1)，复用并变更字典）维护，
+      扫描接口出参新增 <b>boardType</b> 字段带出。字典：
+    </div>
+    <div class="dict">
+      <span class="item"><span class="dict-badge b-hu">沪</span> 0 = 上交所主板</span>
+      <span class="item"><span class="dict-badge b-ke">科</span> 1 = 科创板</span>
+      <span class="item"><span class="dict-badge b-chuang">创</span> 2 = 创业板</span>
+      <span class="item"><span class="dict-badge b-bei">北</span> 3 = 北交所</span>
+      <span class="item"><span class="dict-badge b-shen">深</span> 4 = 深交所主板</span>
+    </div>
+    <div class="note">
+      维护规则：scripts 灌入 stock_info 时由 board_type_of(market, code) 推导（主板按 SH/SZ 拆沪/深，科创/创业/北交所沿用原值）；
+      转板场景（北交所 → 科创板/创业板）新代码按新前缀重新推导，与行情同步一并落库。
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">所有股票 <span class="count">共 5534 只（示例 8 行）</span></div>
+    <table class="table">
+      <thead><tr>
+        <th style="width:44px"></th><th style="width:130px">代码</th><th style="width:120px">名称</th>
+        <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="col-star">☆</td><td>600519<span class="badge b-hu">沪</span></td><td>贵州茅台</td>
+            <td class="num">1425.32</td><td class="num">72.14</td><td class="num">68.90</td><td class="num">78.62</td><td class="num">—</td></tr>
+        <tr><td class="col-star">☆</td><td>000002<span class="badge b-shen">深</span></td><td>万科A</td>
+            <td class="num">9.87</td><td class="num">55.20</td><td class="num">51.44</td><td class="num">62.72</td><td class="num">—</td></tr>
+        <tr><td class="col-star">☆</td><td>688981<span class="badge b-ke">科</span></td><td>中芯国际</td>
+            <td class="num">68.21</td><td class="num">48.75</td><td class="num">50.11</td><td class="num">46.03</td><td class="num">—</td></tr>
+        <tr><td class="col-star">☆</td><td>300750<span class="badge b-chuang">创</span></td><td>宁德时代</td>
+            <td class="num">251.40</td><td class="num">63.30</td><td class="num">59.82</td><td class="num">70.26</td><td class="num">—</td></tr>
+        <tr><td class="col-star">☆</td><td>920185<span class="badge b-bei">北</span></td><td>贝特瑞</td>
+            <td class="num">21.75</td><td class="num">44.90</td><td class="num">46.35</td><td class="num">42.00</td><td class="num">—</td></tr>
+        <tr><td class="col-star">☆</td><td>601318<span class="badge b-hu">沪</span></td><td>中国平安</td>
+            <td class="num">52.63</td><td class="num">51.22</td><td class="num">53.10</td><td class="num">47.46</td><td class="num">—</td></tr>
+        <tr><td class="col-star">☆</td><td>000858<span class="badge b-shen">深</span></td><td>五粮液</td>
+            <td class="num">128.90</td><td class="num">58.44</td><td class="num">54.20</td><td class="num">66.92</td><td class="num">—</td></tr>
+        <tr><td class="col-star">☆</td><td>830799<span class="badge b-bei">北</span></td><td>艾融软件</td>
+            <td class="num">12.38</td><td class="num">60.05</td><td class="num">57.72</td><td class="num">64.71</td><td class="num">—</td></tr>
+      </tbody>
+    </table>
+    <div class="pager"><span>共 5534 条</span><span class="btn on">1</span><span class="btn">2</span><span class="btn">3</span><span>…</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">金叉股票 <span class="count">共 128 只（示例 5 行）</span></div>
+    <table class="table">
+      <thead><tr>
+        <th style="width:44px"></th><th style="width:130px">代码</th><th style="width:120px">名称</th>
+        <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="col-star">☆</td><td>688111<span class="badge b-ke">科</span></td><td>金山办公</td>
+            <td class="num">301.20</td><td class="num">52.30</td><td class="num">46.12</td><td class="num">64.66</td><td class="num">48.71</td></tr>
+        <tr><td class="col-star">☆</td><td>300059<span class="badge b-chuang">创</span></td><td>东方财富</td>
+            <td class="num">18.42</td><td class="num">61.05</td><td class="num">55.30</td><td class="num">72.55</td><td class="num">49.10</td></tr>
+        <tr><td class="col-star">☆</td><td>600036<span class="badge b-hu">沪</span></td><td>招商银行</td>
+            <td class="num">35.88</td><td class="num">66.44</td><td class="num">61.02</td><td class="num">77.28</td><td class="num">47.66</td></tr>
+        <tr><td class="col-star">☆</td><td>000333<span class="badge b-shen">深</span></td><td>美的集团</td>
+            <td class="num">62.15</td><td class="num">54.78</td><td class="num">50.33</td><td class="num">63.68</td><td class="num">45.92</td></tr>
+        <tr><td class="col-star">☆</td><td>920002<span class="badge b-bei">北</span></td><td>万达轴承</td>
+            <td class="num">19.66</td><td class="num">59.87</td><td class="num">57.10</td><td class="num">65.41</td><td class="num">50.02</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-head">交易位股票 <span class="count">共 23 只（示例 3 行）</span></div>
+    <table class="table">
+      <thead><tr>
+        <th style="width:44px"></th><th style="width:130px">代码</th><th style="width:120px">名称</th>
+        <th>收盘价</th><th>K</th><th>D</th><th>J</th><th>交汇点</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="col-star">☆</td><td>300308<span class="badge b-chuang">创</span></td><td>中际旭创</td>
+            <td class="num">128.70</td><td class="num">70.20</td><td class="num">64.55</td><td class="num">81.50</td><td class="num">46.80</td></tr>
+        <tr><td class="col-star">☆</td><td>688256<span class="badge b-ke">科</span></td><td>寒武纪</td>
+            <td class="num">455.00</td><td class="num">58.90</td><td class="num">52.44</td><td class="num">71.82</td><td class="num">44.36</td></tr>
+        <tr><td class="col-star">☆</td><td>601899<span class="badge b-hu">沪</span></td><td>紫金矿业</td>
+            <td class="num">17.52</td><td class="num">62.33</td><td class="num">58.07</td><td class="num">70.85</td><td class="num">49.74</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

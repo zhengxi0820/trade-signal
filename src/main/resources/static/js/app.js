@@ -61,6 +61,15 @@ createApp({
       page: 'all',
       favs: [],
       searchKw: '',
+      // 板块设置（纯前端过滤，不传后端）：默认全选 = 不过滤
+      boardFilter: ['0', '1', '2', '3', '4'],
+      boardOptions: [
+        { value: '0', label: '上交所主板' },
+        { value: '1', label: '科创板' },
+        { value: '2', label: '创业板' },
+        { value: '3', label: '北交所' },
+        { value: '4', label: '深交所主板' },
+      ],
       // 周/月/季物化未就绪标记（后端 X-Data-Not-Ready 头）
       dataNotReady: false,
       // 「其他参数」：点击查询后关闭图表 / 查询历史周期时同步展示最新周期（localStorage 持久化，纯 UI 偏好，不进查询）
@@ -165,9 +174,13 @@ createApp({
       return this.allColumns.filter(c => this.goldCols.includes(c.prop));
     },
     // 页签 + 筛选后的三个列表视图
-    viewAllStockList() { return this._favFilter(this.allStockList); },
-    viewGoldCrossList() { return this._favFilter(this.goldCrossList); },
-    viewTradeSignalList() { return this._favFilter(this.tradeSignalList); },
+    viewAllStockList() { return this._boardFilter(this._favFilter(this.allStockList)); },
+    viewGoldCrossList() { return this._boardFilter(this._favFilter(this.goldCrossList)); },
+    viewTradeSignalList() { return this._boardFilter(this._favFilter(this.tradeSignalList)); },
+    // 板块设置：全选 = 不过滤（含 boardType 为空的股票）
+    boardAllOn() {
+      return this.boardFilter.length === 5;
+    },
     // 所有股票表当前页切片（基于过滤后视图）
     pagedAllStockList() {
       const start = (this.allPage - 1) * this.allPageSize;
@@ -175,6 +188,16 @@ createApp({
     },
     visibleSignalCols() {
       return this.allColumns.filter(c => this.signalCols.includes(c.prop));
+    },
+    // 三张表的「代码」列为固定列（带挂牌徽标），其余列仍走列设置动态渲染
+    otherColumns() {
+      return this.allColumns.filter(c => c.prop !== 'code');
+    },
+    visibleGoldColsNoCode() {
+      return this.visibleGoldCols.filter(c => c.prop !== 'code');
+    },
+    visibleSignalColsNoCode() {
+      return this.visibleSignalCols.filter(c => c.prop !== 'code');
     },
     // 日线：可交易日集合（periods 已剔除未来日期与未完结周期）
     tradeDates() {
@@ -246,6 +269,10 @@ createApp({
     // 表格数字列格式化
     fmtNum(row, column, cellValue) {
       return fmt2(cellValue);
+    },
+    // 挂牌徽标文案（boardType 字典：0=上交所主板 1=科创板 2=创业板 3=北交所 4=深交所主板）
+    badgeText(boardType) {
+      return ({ '0': '沪', '1': '科', '2': '创', '3': '北', '4': '深' })[boardType] || '';
     },
 
     // ---- 认证 ----
@@ -342,6 +369,14 @@ createApp({
       const kw = this.searchKw.trim();
       if (kw) r = r.filter(s => s.code.includes(kw) || (s.name && s.name.includes(kw)));
       return r;
+    },
+    // 板块过滤：全选时原样返回；否则只保留勾选板块（boardType 为空只在全选时显示）
+    _boardFilter(list) {
+      if (this.boardFilter.length === 5) return list;
+      return list.filter(s => this.boardFilter.includes(s.boardType));
+    },
+    toggleBoardAll() {
+      this.boardFilter = this.boardAllOn ? [] : ['0', '1', '2', '3', '4'];
     },
     isFav(code) { return this.favs.includes(code); },
     switchPage(p) { this.page = p; this.allPage = 1; },

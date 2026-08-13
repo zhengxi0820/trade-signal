@@ -6,8 +6,8 @@
   <title>交易位信号系统</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/vendor/index.css">
-  <link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/vendor/index.css">
+<link rel="stylesheet" href="/css/style.css?v=6">
 </head>
 <body>
 <div id="app">
@@ -111,9 +111,26 @@
       </template>
 
       <el-input v-model="searchKw" placeholder="代码 / 名称筛选" clearable style="width: 200px"></el-input>
-      <el-button type="primary" plain icon="Setting" @click="paramOpen = !paramOpen">
-        参数设置
-      </el-button>
+      <!-- 板块设置：纯前端过滤（按 boardType），不传后端，四个列表实时生效 -->
+      <el-popover placement="bottom-start" :width="230" trigger="click" :persistent="false">
+        <template #reference>
+          <el-button type="primary" plain>板块设置</el-button>
+        </template>
+        <div class="board-settings">
+          <div class="board-settings-head">
+            <span>显示板块</span>
+            <span class="board-toggle-all" @click="toggleBoardAll">{{ boardAllOn ? '清空' : '全选' }}</span>
+          </div>
+          <div v-for="b in boardOptions" :key="b.value" class="board-opt">
+            <label class="board-opt-label">
+              <input type="checkbox" :value="b.value" v-model="boardFilter">
+              <span class="x-badge" :class="'x-' + b.value">{{ badgeText(b.value) }}</span>{{ b.label }}
+            </label>
+          </div>
+          <div v-if="boardFilter.length === 0" class="board-empty-tip">未勾选任何板块，列表将为空</div>
+        </div>
+      </el-popover>
+      <el-button type="primary" plain @click="paramOpen = !paramOpen">参数设置</el-button>
       <el-button type="primary" icon="Search" :loading="querying" @click="loadLists">查询<span v-if="queryDirty" class="query-dot"></span></el-button>
     </div>
 
@@ -197,7 +214,12 @@
           <span class="fav-star" :class="{on: isFav(scope.row.code)}" @click.stop="toggleFav(scope.row.code)">{{ isFav(scope.row.code) ? '★' : '☆' }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-for="col in allColumns" :key="col.prop"
+      <el-table-column prop="code" label="代码" min-width="100">
+        <template #default="scope">
+          <span class="code-cell"><span v-if="badgeText(scope.row.boardType)" class="x-badge" :class="'x-' + scope.row.boardType">{{ badgeText(scope.row.boardType) }}</span>{{ scope.row.code }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column v-for="col in otherColumns" :key="col.prop"
                        :prop="col.prop" :label="col.label" :min-width="col.minWidth"
                        :formatter="col.fmt ? fmtNum : undefined"
                        :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
@@ -217,9 +239,11 @@
             <template #reference>
               <el-button size="small" text icon="Operation">列设置</el-button>
             </template>
-            <el-checkbox-group v-model="goldCols" class="col-checks">
-              <el-checkbox v-for="c in allColumns" :key="c.prop" :value="c.prop">{{ c.label }}</el-checkbox>
-            </el-checkbox-group>
+            <div class="col-checks">
+              <label v-for="c in otherColumns" :key="c.prop" class="board-opt-label">
+                <input type="checkbox" :value="c.prop" v-model="goldCols">{{ c.label }}
+              </label>
+            </div>
           </el-popover>
         </div>
       </template>
@@ -227,15 +251,20 @@
                 height="300"
                 @current-change="row => onSelect(row, 'gold')"
                 :row-class-name="() => 'clickable-row'">
-        <el-table-column width="46" align="center">
-          <template #default="scope">
-            <span class="fav-star" :class="{on: isFav(scope.row.code)}" @click.stop="toggleFav(scope.row.code)">{{ isFav(scope.row.code) ? '★' : '☆' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-for="col in visibleGoldCols" :key="col.prop"
-                         :prop="col.prop" :label="col.label" :width="col.width"
-                         :formatter="col.fmt ? fmtNum : undefined"
-                         :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
+      <el-table-column width="46" align="center">
+        <template #default="scope">
+          <span class="fav-star" :class="{on: isFav(scope.row.code)}" @click.stop="toggleFav(scope.row.code)">{{ isFav(scope.row.code) ? '★' : '☆' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="code" label="代码" width="112">
+        <template #default="scope">
+          <span class="code-cell"><span v-if="badgeText(scope.row.boardType)" class="x-badge" :class="'x-' + scope.row.boardType">{{ badgeText(scope.row.boardType) }}</span>{{ scope.row.code }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column v-for="col in visibleGoldColsNoCode" :key="col.prop"
+                       :prop="col.prop" :label="col.label" :width="col.width"
+                       :formatter="col.fmt ? fmtNum : undefined"
+                       :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
       </el-table>
     </el-card>
 
@@ -247,9 +276,11 @@
             <template #reference>
               <el-button size="small" text icon="Operation">列设置</el-button>
             </template>
-            <el-checkbox-group v-model="signalCols" class="col-checks">
-              <el-checkbox v-for="c in allColumns" :key="c.prop" :value="c.prop">{{ c.label }}</el-checkbox>
-            </el-checkbox-group>
+            <div class="col-checks">
+              <label v-for="c in otherColumns" :key="c.prop" class="board-opt-label">
+                <input type="checkbox" :value="c.prop" v-model="signalCols">{{ c.label }}
+              </label>
+            </div>
           </el-popover>
         </div>
       </template>
@@ -257,15 +288,20 @@
                 height="300"
                 @current-change="row => onSelect(row, 'signal')"
                 :row-class-name="() => 'clickable-row'">
-        <el-table-column width="46" align="center">
-          <template #default="scope">
-            <span class="fav-star" :class="{on: isFav(scope.row.code)}" @click.stop="toggleFav(scope.row.code)">{{ isFav(scope.row.code) ? '★' : '☆' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-for="col in visibleSignalCols" :key="col.prop"
-                         :prop="col.prop" :label="col.label" :width="col.width"
-                         :formatter="col.fmt ? fmtNum : undefined"
-                         :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
+      <el-table-column width="46" align="center">
+        <template #default="scope">
+          <span class="fav-star" :class="{on: isFav(scope.row.code)}" @click.stop="toggleFav(scope.row.code)">{{ isFav(scope.row.code) ? '★' : '☆' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="code" label="代码" width="112">
+        <template #default="scope">
+          <span class="code-cell"><span v-if="badgeText(scope.row.boardType)" class="x-badge" :class="'x-' + scope.row.boardType">{{ badgeText(scope.row.boardType) }}</span>{{ scope.row.code }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column v-for="col in visibleSignalColsNoCode" :key="col.prop"
+                       :prop="col.prop" :label="col.label" :width="col.width"
+                       :formatter="col.fmt ? fmtNum : undefined"
+                       :align="col.prop === 'code' || col.prop === 'name' ? 'left' : 'right'"></el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -274,7 +310,7 @@
   <el-card v-if="chartStock" class="chart-card" shadow="never" v-loading="loadingChart">
     <template #header>
       <div class="chart-head">
-        <span>{{ chartStock.code }}<template v-if="chartStock.name">&nbsp;{{ chartStock.name }}</template>&nbsp;&nbsp;价格走势 / KDJ</span>
+        <span class="code-cell"><span v-if="badgeText(chartStock.boardType)" class="x-badge chart-badge" :class="'x-' + chartStock.boardType">{{ badgeText(chartStock.boardType) }}</span>{{ chartStock.code }}<template v-if="chartStock.name">&nbsp;{{ chartStock.name }}</template>&nbsp;&nbsp;价格走势 / KDJ</span>
         <span class="period">{{ periodName }}</span>
       </div>
     </template>

@@ -28,6 +28,11 @@ public class CrossStockVO {
     private String market;
 
     /**
+     * 板块：0=上交所主板 1=科创板 2=创业板 3=北交所 4=深交所主板
+     */
+    private String boardType;
+
+    /**
      * 截止周期开盘价
      */
     private BigDecimal open;

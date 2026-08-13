@@ -37,6 +37,41 @@
     .fav-star { cursor: pointer; font-size: 15px; color: #c8d8ea; user-select: none; }
     .fav-star:hover { transform: scale(1.2); display: inline-block; }
     .fav-star.on { color: #ffb020; }
+    /* 股票挂牌徽标（boardType 字典：0=上交所主板 1=科创板 2=创业板 3=北交所 4=深交所主板） */
+    .code-cell { white-space: nowrap; }
+    .x-badge { box-sizing: border-box; display: inline-block; min-width: 15px; height: 14px; line-height: 14px;
+      padding: 0 3px; margin-left: 5px; border-radius: 3px;
+      font-size: 9px; font-weight: 600; text-align: center; color: #fff; vertical-align: 1px; }
+    .x-0 { background: #1f5fa8; }
+    .x-1 { background: #2e9e5b; }
+    .x-2 { background: #e8852e; }
+    .x-3 { background: #7d5bc6; }
+    .x-4 { background: #c93c3c; }
+    /* 图表标题徽标：代码前，17px（与表格 14px 区分） */
+    .chart-badge { min-width: 17px; height: 17px; line-height: 17px; margin-left: 0; margin-right: 6px;
+      padding: 0 4px; border-radius: 4px; font-size: 11px; vertical-align: 2px; }
+    /* 表格代码列徽标：代码前，尺寸不变（14px），间距在徽标右侧 */
+    .code-cell .x-badge:not(.chart-badge) { margin-left: 0; margin-right: 5px; }
+    /* 板块设置 popover（定稿：原生勾选框 + 9px 徽标 + 14px 文字，无股票数） */
+    .board-settings-head { display: flex; justify-content: space-between; align-items: center;
+      font-weight: 600; margin-bottom: 6px; }
+    .board-toggle-all { font-size: 12px; color: #409eff; cursor: pointer; font-weight: 400; }
+    .board-opt-label { display: flex; align-items: center; gap: 9px; padding: 5px 0;
+      cursor: pointer; user-select: none; font-size: 14px; }
+    /* 自定义勾选框（macOS 风格：圆角方块 + 系统蓝渐变 + 白勾，板块设置与列设置共用） */
+    .board-opt-label input { -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+      margin: 0; border: 1px solid #c8ccd4; border-radius: 4px;
+      background: linear-gradient(180deg, #ffffff 0%, #f5f6f8 100%);
+      box-shadow: inset 0 1px 1px rgba(0, 0, 0, .04);
+      cursor: pointer; position: relative; flex: none;
+      transition: border-color .12s, background .12s; }
+    .board-opt-label input:hover { border-color: #aab1bb; }
+    .board-opt-label input:checked { background: linear-gradient(180deg, #3d8bff 0%, #0a60ff 100%);
+      border-color: #0a60ff; box-shadow: inset 0 1px 1px rgba(0, 0, 0, .12); }
+    .board-opt-label input:checked::after { content: ""; position: absolute; left: 5px; top: 2px;
+      width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+    .board-opt-label .x-badge { margin-left: 0; }
+    .board-empty-tip { color: #909399; font-size: 12px; margin-top: 8px; }
     /* 查询按钮的未应用修改提示点 */
     .query-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ffb020; margin-left: 5px; vertical-align: middle; }
     #kdjChart { width: 100%; height: 560px; }

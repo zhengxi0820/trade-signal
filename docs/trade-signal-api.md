@@ -93,6 +93,7 @@ GET /kdj/gold-cross
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | code / name / market | String | 股票代码 / 股票名称 / 市场标识 |
+| boardType | String | 板块：0=上交所主板 1=科创板 2=创业板 3=北交所 4=深交所主板（前端徽标 沪/科/创/北/深） |
 | open / high / low / close | BigDecimal | 截止周期开 / 高 / 低 / 收 |
 | k / d / j | BigDecimal | 截止周期 K、D、J 值 |
 | crossValue | BigDecimal | 截止周期金叉交汇点数值 |

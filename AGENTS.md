@@ -32,7 +32,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 - **运算统一 BigDecimal**，禁用 double/float（包括 n/m1/m2 这类周期参数）。
 - 开关参数用字符串 `"1"`/`"0"`，不用 boolean。
 - 周期类型用 `kdjType`："0"=日、"1"=周、"2"=月、"3"=季，不新增平行的 period 字段。
-- 复权类型用 `adjust`："0"=无复权、"1"=前复权（默认）、"2"=后复权（预留）；板块用 `boardType`："0"=沪深主板、"1"=科创板、"2"=创业板、"3"=北交所。
+- 复权类型用 `adjust`："0"=无复权、"1"=前复权（默认）、"2"=后复权（预留）；板块用 `boardType`："0"=上交所主板、"1"=科创板、"2"=创业板、"3"=北交所、"4"=深交所主板。
 - 日期用三字段规则：日/月度 `tradeDate`(yyyymmdd)；周度 `tradeDateMin/tradeDateMax`(yyyymmdd)；季度 `tradeDateMin/tradeDateMax`(yyyymm)。入参出参结构一致，不引入新日期字段。
 - KDJ 值与金叉/死叉/交易位事件**不落库**，单票序列一律实时计算；全市场扫描有两层内存缓存（均按 `max(trade_date)` 水位自动失效，`POST /kdj/cache/refresh` 手动清空）：
   - `ScanResultCache`（结果层）：三个扫描接口的最终列表，key = 接口 + 全部生效参数，命中毫秒级；**同 key 并发未命中时单飞共享一次计算**（防冷缓存并发风暴，2026-08-12 OOM 事故根因）

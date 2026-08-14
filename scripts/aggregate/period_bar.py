@@ -5,9 +5,10 @@
 - 周 = ISO 周（周一起，YEARWEEK(...,3)）；月 = 自然月；季 = 自然季
 - OPEN = 周期首交易日开盘、CLOSE = 周期末交易日收盘、HIGH/LOW = 周期内极值
 - PERIOD_START/END = 周期首/末真实交易日（yyyymmdd）
-- **未完结周期不入表**：判定规则 = 周期末交易日 < 全库最大交易日（HAVING PE < max）。
-  即含最新交易日的那个周期（本周/本月/本季）永远不物化，下周数据进来后它自然变成
-  已完结周期被补物化——与"接受一周延迟"的周频口径自洽。
+- **未完结周期不入表**：判定规则 = 周期桶 key < 全局最新交易日所在周期桶 key
+  （HAVING {pkey} < max_key）。即含最新交易日的那个周期（本周/本月/本季）永远不物化，
+  停牌股也不例外（其"未完结部分周期"不会提前入表），下轮数据进来后自然补物化——
+  与"接受一周延迟"的周频口径自洽。
 - 表无 VOLUME 列（schema 契约），ID 自增，幂等靠唯一键 (PERIOD_TYPE,CODE,ADJUST,PERIOD_END)。
 
 批量口径：SQL 聚合，每 BATCH_SIZE=200 只一批 GROUP BY，不逐股 python 循环。
@@ -42,6 +43,18 @@ PERIOD_CONF = {
     "3": ("CONCAT(LEFT(TRADE_DATE,4),'Q',CEIL(MID(TRADE_DATE,5,2)/3))", 200),  # 自然季
 }
 
+
+def _max_period_key(max_date: str, ptype: str) -> str:
+    """全局最新交易日的周期桶 key（与 PERIOD_CONF 分组键同口径）：
+    周 = ISO 年周（YEARWEEK mode 3）；月 = yyyymm；季 = yyyyQn。"""
+    if ptype == "1":
+        d = date(int(max_date[:4]), int(max_date[4:6]), int(max_date[6:8]))
+        iso = d.isocalendar()
+        return f"{iso[0]}{iso[1]:02d}"
+    if ptype == "2":
+        return max_date[:6]
+    return f"{max_date[:4]}Q{(int(max_date[4:6]) + 2) // 3}"
+
 AGG_SQL = """
     SELECT g.CODE, g.ADJUST, g.PS, g.PE, o.OPEN, g.H, g.L, c.CLOSE
     FROM (
@@ -51,7 +64,7 @@ AGG_SQL = """
         FROM stock_quote
         WHERE CODE IN ({codes_ph}) {cutoff}
         GROUP BY CODE, ADJUST, PKEY
-        HAVING PE < (SELECT MAX(TRADE_DATE) FROM stock_quote)
+        HAVING PKEY < '{max_key}'
     ) g
     JOIN stock_quote o ON o.CODE=g.CODE AND o.ADJUST=g.ADJUST AND o.TRADE_DATE=g.PS
     JOIN stock_quote c ON c.CODE=g.CODE AND c.ADJUST=g.ADJUST AND c.TRADE_DATE=g.PE
@@ -66,7 +79,7 @@ FULL_AGG_SQL = """
                MAX(HIGH) AS H, MIN(LOW) AS L
         FROM stock_quote
         GROUP BY CODE, ADJUST, PKEY
-        HAVING PE < (SELECT MAX(TRADE_DATE) FROM stock_quote)
+        HAVING PKEY < '{max_key}'
     ) g
     JOIN stock_quote o ON o.CODE=g.CODE AND o.ADJUST=g.ADJUST AND o.TRADE_DATE=g.PS
     JOIN stock_quote c ON c.CODE=g.CODE AND c.ADJUST=g.ADJUST AND c.TRADE_DATE=g.PE
@@ -96,13 +109,22 @@ def _materialize_full(conn) -> dict:
     import pymysql
     wconn = get_conn()
     stats = {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(TRADE_DATE) FROM stock_quote")
+        max_date = cur.fetchone()[0]
+    if not max_date:
+        print("[period_bar] stock_quote 为空，跳过全量物化", flush=True)
+        return stats
     try:
         for ptype, (pkey, _) in PERIOD_CONF.items():
             t0 = time.time()
             now = unix_ts()
             total = 0
             # 全量查询不带绑定参数，pymysql 不做 % 转义，需把 %% 还原为 %
-            sql = FULL_AGG_SQL.format(pkey=pkey.replace("%%", "%"))
+            sql = FULL_AGG_SQL.format(
+                pkey=pkey.replace("%%", "%"),
+                max_key=_max_period_key(max_date, ptype),
+            )
             cur = conn.cursor(pymysql.cursors.SSCursor)
             try:
                 cur.execute(sql)
@@ -145,9 +167,16 @@ def materialize(conn, full: bool) -> dict:
         print(f"[period_bar] 本周除权股 {len(event_codes)} 只全周期重算: {sorted(event_codes)[:10]}...", flush=True)
 
     stats = {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(TRADE_DATE) FROM stock_quote")
+        max_date = cur.fetchone()[0]
+    if not max_date:
+        print("[period_bar] stock_quote 为空，跳过物化", flush=True)
+        return stats
     now = unix_ts()
     for ptype, (pkey, window_days) in PERIOD_CONF.items():
         cutoff_date = None if full else (date.today() - timedelta(days=window_days)).strftime("%Y%m%d")
+        max_key = _max_period_key(max_date, ptype)
         total = 0
         nb = (len(codes) + BATCH_SIZE - 1) // BATCH_SIZE
         for bi, batch in enumerate(batched(codes, BATCH_SIZE), 1):
@@ -163,6 +192,7 @@ def materialize(conn, full: bool) -> dict:
                     continue
                 sql = AGG_SQL.format(
                     pkey=pkey,
+                    max_key=max_key,
                     codes_ph=",".join(["%s"] * len(group_codes)),
                     # 注意：这里的 %s 是留给 pymysql 的占位符，不要用 Python % 预填日期
                     cutoff="AND TRADE_DATE >= %s" if cutoff else "",

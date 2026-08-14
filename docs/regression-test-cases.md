@@ -30,3 +30,11 @@
 | R-20260814-09 | 自动化测试套件 | 本地构建环境 | ./mvnw test | 全绿 | 44/44 通过 | 通过 |
 | R-20260814-10 | API 冒烟 | 本地服务运行 | login/periods/all-stocks/series/cache-refresh/未授权 | 204/200/200/200/200/401 | 全部符合 | 通过 |
 | R-20260814-11 | 移动端适配 | 390px 视口 | 检查工具栏横向溢出 | 无横向溢出，控件换行正常 | 无溢出 | 通过 |
+
+## 2026-08-14 补充用例（缓存问题修复）
+
+改动：HTML 页面响应禁用缓存（`HtmlCacheHeaderFilter`），修复浏览器缓存旧版 index.html 导致 Vue 未挂载、`{{ toast.text }}` 原样展示。
+
+| 编号 | 用例 | 前置 | 步骤 | 预期 | 实测 | 状态 |
+|---|---|---|---|---|---|---|
+| R-20260814-12 | HTML 禁用缓存 | 本地服务运行 | GET / 查看响应头；GET /css/style.css?v=13 与 GET /auth/login 查看响应头 | / 含 `Cache-Control: no-cache, no-store, must-revalidate`；css 与 API 路径无该头 | 全部符合；mvnw test 44/44 | 通过 |

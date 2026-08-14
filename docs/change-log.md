@@ -28,3 +28,27 @@
 - API 冒烟：登录 204、未授权 401、periods/all-stocks/series/cache-refresh 200、收藏增删 204 幂等。
 - UI 计算样式对拍 + 390px 移动端无横向溢出。
 - 回归用例编号：R-20260814-01 ~ R-20260814-11。
+
+## 2026-08-14 — 修复线上缓存旧版页面导致 Vue 未挂载（{{ toast.text }} 原样展示）
+
+### 现象
+
+- 线上打开页面时出现弹窗样式的 `{{ toast.text }}` 原样文本（登录提示条模板未编译）。
+
+### 根因
+
+- 全新浏览器实测线上页面正常、Vue 正常挂载；问题来自浏览器缓存了旧版 `index.html`
+  （旧版含内联脚本，被生产 CSP `script-src 'self' 'unsafe-eval'` 拦截后 Vue 无法初始化，
+  模板原样渲染，`.auth-toast` 因 `position:fixed` 看起来像一个弹窗）。
+
+### 修复
+
+- 新增 `com.xi.web.HtmlCacheHeaderFilter`：对 `/` 与 `*.html` 响应下发
+  `Cache-Control: no-cache, no-store, must-revalidate`（含 Pragma/Expires 兼容头），
+  浏览器每次回源校验 index.html；css/js 等静态资源不受影响（继续走 `?v=` 版本号失效）。
+
+### 验证
+
+- 本地：`/` 响应头含 no-store；css/api 路径无该头；`./mvnw test` 44/44 通过。
+- 线上：全新浏览器 Vue 挂载正常（auth 卡片渲染，无 `{{ }}` 残留）；发版后响应头含 no-store。
+- 回归用例编号：R-20260814-12。

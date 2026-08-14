@@ -119,3 +119,300 @@
     .auth-toast.error { background: #fef0f0; color: #d03050; border: 1px solid #fbc4d0; }
     .auth-toast.success { background: #ecf7ff; color: #0b6bcb; border: 1px solid #a8dcf7; }
     @keyframes auth-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+/* ════════════════════════════════════════════════════════════
+   苹果风：工具栏控件（局部改造）
+   范围：截止周期选择器 / 代码名称筛选 / 板块设置 / 参数设置 / 查询
+   令牌统一走 --apple-*，仅覆盖控件层，不动页面其余部分
+   ════════════════════════════════════════════════════════════ */
+:root {
+  --apple-bg-white: #FFFFFF;
+  --apple-bg-light-gray: #F5F5F7;
+  --apple-bg-elevated: #FBFBFD;
+  --apple-text-primary: #1D1D1F;
+  --apple-text-secondary: #6E6E73;
+  --apple-text-tertiary: #86868B;
+  --apple-link-blue: #0066CC;
+  --apple-link-blue-hover: #0077ED;
+  --apple-link-blue-active: #0053A1;
+  --apple-border: #D2D2D7;
+  --apple-border-light: #E4E4E9;
+  --apple-border-hover: #AEAEB2;
+  --apple-radius-input: 10px;
+  --apple-radius-button: 980px;
+  --apple-radius-card-sm: 12px;
+  --apple-radius-check: 6px;
+  --apple-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
+  --apple-shadow-modal: 0 8px 20px rgba(0, 0, 0, 0.08), 0 20px 60px rgba(0, 0, 0, 0.16);
+  --apple-font-text: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --apple-weight-title: 600;
+  --apple-weight-body-medium: 500;
+  --apple-tracking-zh-ui: 0.02em;
+}
+
+/* ── 截止周期 标签 ─────────────────────────────────── */
+.selector-row .label {
+  color: var(--apple-text-secondary);
+  font-size: 14px;
+  font-weight: var(--apple-weight-body-medium);
+  letter-spacing: var(--apple-tracking-zh-ui);
+}
+
+/* ── 截止周期选择器 / 代码名称筛选：苹果风输入框 ─────── */
+.selector-row .el-input__wrapper,
+.selector-row .el-select__wrapper {
+  border-radius: var(--apple-radius-input);
+  background: var(--apple-bg-white);
+  box-shadow: 0 0 0 1px var(--apple-border) inset;
+  transition: box-shadow 0.2s ease;
+}
+
+.selector-row .el-input__wrapper:hover,
+.selector-row .el-select__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--apple-border-hover) inset;
+}
+
+.selector-row .el-input__wrapper.is-focus,
+.selector-row .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--apple-link-blue) inset,
+              0 0 0 3px rgba(0, 102, 204, 0.22);
+}
+
+.selector-row .el-input__inner {
+  color: var(--apple-text-primary);
+  font-weight: 400;
+}
+
+.selector-row .el-input__inner::placeholder,
+.selector-row .el-select__placeholder {
+  color: var(--apple-text-tertiary);
+}
+
+.selector-row .el-input__prefix,
+.selector-row .el-input__suffix {
+  color: var(--apple-text-tertiary);
+}
+
+/* ── 查询 / 板块设置 / 参数设置：苹果风胶囊按钮 ──────── */
+.selector-row .el-button {
+  border-radius: var(--apple-radius-button);
+  padding: 8px 18px;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* 实心主按钮（查询） */
+.selector-row .el-button--primary {
+  --el-button-text-color: var(--apple-bg-white);
+  --el-button-bg-color: var(--apple-link-blue);
+  --el-button-border-color: var(--apple-link-blue);
+  --el-button-hover-text-color: var(--apple-bg-white);
+  --el-button-hover-bg-color: var(--apple-link-blue-hover);
+  --el-button-hover-border-color: var(--apple-link-blue-hover);
+  --el-button-active-bg-color: var(--apple-link-blue-active);
+  --el-button-active-border-color: var(--apple-link-blue-active);
+}
+
+/* 描边按钮（板块设置 / 参数设置）：白底 + 苹果蓝字 */
+.selector-row .el-button--primary.is-plain {
+  --el-button-text-color: var(--apple-link-blue);
+  --el-button-bg-color: var(--apple-bg-white);
+  --el-button-border-color: #C7C7CC;
+  --el-button-hover-text-color: var(--apple-link-blue);
+  --el-button-hover-bg-color: #EDF4FB;
+  --el-button-hover-border-color: var(--apple-link-blue);
+  --el-button-active-text-color: var(--apple-link-blue);
+  --el-button-active-bg-color: #E1EDF8;
+  --el-button-active-border-color: var(--apple-link-blue);
+}
+
+/* 板块设置 / 参数设置 / 查询：三者之间间距比行内其他控件收紧 3px */
+.selector-row .el-button + .el-button {
+  margin-left: -3px;
+}
+
+.selector-row .el-button:focus-visible,
+.selector-row .board-toggle-all:focus-visible {
+  outline: 2px solid rgba(0, 102, 204, 0.45);
+  outline-offset: 2px;
+}
+
+/* ── 截止周期（季度）：分段控件苹果化 ───────────────── */
+.selector-row .el-radio-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  gap: 5px;
+}
+
+.selector-row .el-radio-button {
+  vertical-align: middle;
+}
+
+.selector-row .el-radio-button__inner {
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--apple-text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+  box-shadow: none;
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.selector-row .el-radio-button__inner:hover {
+  color: var(--apple-text-primary);
+}
+
+.selector-row .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background: var(--apple-bg-white);
+  color: var(--apple-link-blue);
+  font-weight: var(--apple-weight-title);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+/* ── 板块设置弹层：苹果风卡片 ─────────────────────── */
+.el-popover.el-popper {
+  border: 1px solid var(--apple-border-light);
+  border-radius: var(--apple-radius-card-sm);
+  box-shadow: var(--apple-shadow-modal);
+  padding: 14px 16px;
+  color: var(--apple-text-primary);
+}
+
+.board-settings-head {
+  color: var(--apple-text-primary);
+  font-weight: var(--apple-weight-title);
+  letter-spacing: var(--apple-tracking-zh-ui);
+}
+
+.board-toggle-all {
+  color: var(--apple-link-blue);
+  font-weight: 400;
+}
+
+.board-toggle-all:hover {
+  color: var(--apple-link-blue-hover);
+}
+
+.board-opt-label {
+  color: var(--apple-text-primary);
+  font-size: 14px;
+}
+
+/* 勾选框：苹果蓝实底 + 白勾，圆角 6px */
+.board-opt-label input {
+  border: 1px solid #C7C7CC;
+  border-radius: var(--apple-radius-check);
+  background: var(--apple-bg-white);
+}
+
+.board-opt-label input:hover {
+  border-color: var(--apple-border-hover);
+}
+
+.board-opt-label input:checked {
+  background: var(--apple-link-blue);
+  border-color: var(--apple-link-blue);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.12);
+}
+
+.board-empty-tip {
+  color: var(--apple-text-tertiary);
+}
+
+/* ── 查询按钮图标：以相邻文字按钮为基准对齐 ───────────
+   文字 14px，图标取 13px 做光学平衡（14px 图标视觉偏大） */
+.selector-row .el-button .el-icon {
+  width: 13px;
+  height: 13px;
+  font-size: 13px;
+}
+
+/* ── 日线 / 周线 / 月线 / 季线：苹果风分段控件 ─────── */
+.period-btns .el-radio-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  gap: 10px;
+}
+
+.period-btns .el-radio-button {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.period-btns .el-radio-button__inner {
+  border: none !important;
+  border-radius: 9px !important;
+  padding: 7px 18px;
+  background: transparent;
+  color: var(--apple-text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  box-shadow: none;
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.period-btns .el-radio-button__inner:hover {
+  color: var(--apple-text-primary);
+}
+
+.period-btns .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background: var(--apple-bg-white);
+  color: var(--apple-link-blue);
+  font-weight: var(--apple-weight-title);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+@media (max-width: 733px) {
+  .period-btns .el-radio-button__inner {
+    padding: 6px 13px;
+    font-size: 13px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   参数设置面板：仅保留 复权类型标签块 + 开关背景色（局部）
+   其余面板改动已回滚，恢复原版
+   ════════════════════════════════════════════════════════════ */
+.param-panel .el-switch {
+  --el-switch-on-color: var(--apple-link-blue);
+}
+
+/* 复权类型：与页面其他分段控件同款，整体上移 4px */
+.param-panel .el-radio-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.param-panel .el-radio-button {
+  vertical-align: middle;
+}
+
+.param-panel .el-radio-button__inner {
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 5px 14px;
+  background: transparent;
+  color: var(--apple-text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+  box-shadow: none;
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.param-panel .el-radio-button__inner:hover {
+  color: var(--apple-text-primary);
+}
+
+.param-panel .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background: var(--apple-bg-white);
+  color: var(--apple-link-blue);
+  font-weight: var(--apple-weight-title);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.05);
+}

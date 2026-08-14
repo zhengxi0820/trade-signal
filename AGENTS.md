@@ -52,6 +52,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 
 - 计算逻辑改动必须同步 `KDJHandlerTest`（构造合成 K/D 序列逐条规则对拍）。
 - 测试数据源是 H2（`src/test/resources/application.yaml`），不要在测试里连真实 MySQL。
+- 每次需求/改动测试完成后，必须把本次测试用例补充进回归测试用例库 `docs/regression-test-cases.md`，并在发版前执行回归（约定说明见该文档）。
 
 ## 深入文档
 

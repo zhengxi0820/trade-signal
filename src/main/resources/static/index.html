@@ -7,7 +7,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/vendor/index.css">
-<link rel="stylesheet" href="/css/style.css?v=6">
+<link rel="stylesheet" href="/css/style.css?v=13">
 </head>
 <body>
 <div id="app">
@@ -131,7 +131,7 @@
         </div>
       </el-popover>
       <el-button type="primary" plain @click="paramOpen = !paramOpen">参数设置</el-button>
-      <el-button type="primary" icon="Search" :loading="querying" @click="loadLists">查询<span v-if="queryDirty" class="query-dot"></span></el-button>
+      <el-button type="primary" :loading="querying" @click="loadLists">查询<span v-if="queryDirty" class="query-dot"></span></el-button>
     </div>
 
     <!-- 周/月/季物化未就绪提示（后端 X-Data-Not-Ready 头，物化自愈中） -->

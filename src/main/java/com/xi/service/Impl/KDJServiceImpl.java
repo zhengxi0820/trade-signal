@@ -103,6 +103,40 @@ public class KDJServiceImpl implements KDJService {
     private static final long READY_CACHE_TTL_MS = 60_000;
     private final Map<String, String[]> periodBarMaxCache = new ConcurrentHashMap<>();
     private final Map<String, String[]> latestPeriodEndCache = new ConcurrentHashMap<>();
+    /** 周期日历（work_day 未来感知）短缓存 60s：type -> [PeriodCalendar, 时间戳] */
+    private final Map<String, Object[]> periodCalendarCache = new ConcurrentHashMap<>();
+
+    /** 库内最新交易日（完结锚点 G）；库空时兜底当前自然日。 */
+    private LocalDate asOfDate() {
+        String max = stockQuoteMapper.queryMaxTradeDate();
+        return max == null ? LocalDate.now() : LocalDate.parse(max, DateTimeFormatter.BASIC_ISO_DATE);
+    }
+
+    /** 周期日历：work_day（含未来日期）→ 每周期桶最后一个计划交易日 + 日历最大日（截断兜底）。 */
+    private KDJHandler.PeriodCalendar periodCalendar(String kdjType) {
+        long now = System.currentTimeMillis();
+        Object[] cached = periodCalendarCache.get(kdjType);
+        if (cached != null && now - (Long) cached[1] < READY_CACHE_TTL_MS) {
+            return (KDJHandler.PeriodCalendar) cached[0];
+        }
+        List<String> dates = workDayMapper.queryAll(new WorkDayQuery()).stream()
+                .map(WorkDayDO::getTradeDate)
+                .distinct()
+                .sorted()
+                .toList();
+        Map<String, String> lastByKey = new LinkedHashMap<>();
+        String maxDate = null;
+        for (String d : dates) {
+            String key = KDJHandler.periodKey(LocalDate.parse(d, DateTimeFormatter.BASIC_ISO_DATE), kdjType);
+            lastByKey.merge(key, d, (a, b) -> a.compareTo(b) >= 0 ? a : b);
+            if (maxDate == null || d.compareTo(maxDate) > 0) {
+                maxDate = d;
+            }
+        }
+        KDJHandler.PeriodCalendar calendar = new KDJHandler.PeriodCalendar(lastByKey, maxDate);
+        periodCalendarCache.put(kdjType, new Object[]{calendar, now});
+        return calendar;
+    }
 
     @Override
     public List<KDJDTO> getAllKDJ(KDJParam kdjParam) {
@@ -149,7 +183,7 @@ public class KDJServiceImpl implements KDJService {
         List<String> tradeDates = workDayMapper.queryAll(query).stream()
                 .map(WorkDayDO::getTradeDate)
                 .toList();
-        List<KDJHandler.PeriodBar> bars = kdjHandler.aggregateDates(tradeDates, param.getKdjType(), LocalDate.now());
+        List<KDJHandler.PeriodBar> bars = kdjHandler.aggregateDates(tradeDates, param.getKdjType(), asOfDate());
         // 时间倒序（最新周期在前），供前端选择器展示
         List<WorkDayVO> result = new ArrayList<>(bars.size());
         for (int i = bars.size() - 1; i >= 0; i--) {
@@ -232,7 +266,7 @@ public class KDJServiceImpl implements KDJService {
         List<String> tradeDates = workDayMapper.queryAll(new WorkDayQuery()).stream()
                 .map(WorkDayDO::getTradeDate)
                 .toList();
-        List<KDJHandler.PeriodBar> bars = kdjHandler.aggregateDates(tradeDates, kdjType, LocalDate.now());
+        List<KDJHandler.PeriodBar> bars = kdjHandler.aggregateDates(tradeDates, kdjType, asOfDate());
         String key = null;
         if (!bars.isEmpty()) {
             String end = bars.get(bars.size() - 1).endDate;
@@ -246,6 +280,7 @@ public class KDJServiceImpl implements KDJService {
     public void resetReadyCaches() {
         periodBarMaxCache.clear();
         latestPeriodEndCache.clear();
+        periodCalendarCache.clear();
     }
 
     @Override
@@ -425,7 +460,8 @@ public class KDJServiceImpl implements KDJService {
                     for (String code : chunk) {
                         List<StockQuoteDO> dailies = byCode.getOrDefault(code, List.of());
                         scanBarsCache.put(ScanBarsCache.key(code, adjust, kdjType),
-                                lastN(kdjHandler.aggregate(dailies, kdjType, LocalDate.now()), SCAN_CACHE_WINDOW));
+                                lastN(kdjHandler.aggregate(dailies, kdjType, asOfDate(), periodCalendar(kdjType)),
+                                        SCAN_CACHE_WINDOW));
                     }
                 }
             }
@@ -478,7 +514,7 @@ public class KDJServiceImpl implements KDJService {
             return loadScanAggregatedBars(kdjParam, periodBars, anchor);
         }
         List<StockQuoteDO> dailies = loadScanDailies(kdjParam, periodBars, anchor);
-        return kdjHandler.aggregate(dailies, kdjParam.getKdjType(), LocalDate.now());
+        return kdjHandler.aggregate(dailies, kdjParam.getKdjType(), asOfDate(), periodCalendar(kdjParam.getKdjType()));
     }
 
     /**
@@ -605,7 +641,8 @@ public class KDJServiceImpl implements KDJService {
      * 日线聚合为周期K线，并按截止周期截断。
      */
     private List<KDJHandler.PeriodBar> loadPeriodBars(KDJParam kdjParam, List<StockQuoteDO> dailies) {
-        List<KDJHandler.PeriodBar> bars = kdjHandler.aggregate(dailies, kdjParam.getKdjType(), LocalDate.now());
+        List<KDJHandler.PeriodBar> bars = kdjHandler.aggregate(dailies, kdjParam.getKdjType(), asOfDate(),
+                periodCalendar(kdjParam.getKdjType()));
         return truncateAtEndPeriod(bars, kdjParam);
     }
 

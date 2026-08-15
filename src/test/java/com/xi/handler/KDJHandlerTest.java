@@ -7,7 +7,9 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -19,6 +21,10 @@ class KDJHandlerTest {
 
     private final KDJHandler core = new KDJHandler();
 
+    private KDJHandler.PeriodCalendar calendar(Map<String, String> lastByKey, String maxDate) {
+        return new KDJHandler.PeriodCalendar(new LinkedHashMap<>(lastByKey), maxDate);
+    }
+
     // ---------- aggregate ----------
 
     @Test
@@ -26,7 +32,7 @@ class KDJHandlerTest {
         List<StockQuoteDO> dailies = List.of(
                 daily("20240102", 10, 5, 8),
                 daily("20240103", 12, 6, 11));
-        List<KDJHandler.PeriodBar> bars = core.aggregate(dailies, "0", LocalDate.of(2024, 1, 3));
+        List<KDJHandler.PeriodBar> bars = core.aggregate(dailies, "0", LocalDate.of(2024, 1, 3), null);
         assertEquals(2, bars.size());
         assertEquals("20240102", bars.get(0).endDate);
     }
@@ -36,8 +42,9 @@ class KDJHandlerTest {
         List<StockQuoteDO> dailies = List.of(
                 daily("20240102", 10, 5, 8),
                 daily("20240104", 12, 6, 11));
-        // 下一周的周一，本周已完结
-        List<KDJHandler.PeriodBar> bars = core.aggregate(dailies, "1", LocalDate.of(2024, 1, 8));
+        // 本周最后计划交易日 0105 ≤ 最新交易日 0108，且日历已覆盖该周之后 → 已完结
+        KDJHandler.PeriodCalendar cal = calendar(Map.of("20240101", "20240105"), "20241231");
+        List<KDJHandler.PeriodBar> bars = core.aggregate(dailies, "1", LocalDate.of(2024, 1, 8), cal);
         assertEquals(1, bars.size());
         KDJHandler.PeriodBar bar = bars.get(0);
         assertEquals("20240102", bar.startDate);
@@ -52,9 +59,18 @@ class KDJHandlerTest {
         List<StockQuoteDO> dailies = List.of(
                 daily("20240102", 10, 5, 8),
                 daily("20240104", 12, 6, 11));
-        // 本周三，本周未完结
-        List<KDJHandler.PeriodBar> bars = core.aggregate(dailies, "1", LocalDate.of(2024, 1, 3));
+        // 本周最后计划交易日 0105 > 最新交易日 0103 → 本周未完结
+        KDJHandler.PeriodCalendar cal = calendar(Map.of("20240101", "20240105"), "20241231");
+        List<KDJHandler.PeriodBar> bars = core.aggregate(dailies, "1", LocalDate.of(2024, 1, 3), cal);
         assertTrue(bars.isEmpty());
+    }
+
+    @Test
+    void aggregateWeekExcludesWhenCalendarTruncated() {
+        List<StockQuoteDO> dailies = List.of(daily("20240102", 10, 5, 8));
+        // 日历最大日就是本周最后交易日（种子缺失/截断）→ 无法确认本周完结，按未完结核对
+        KDJHandler.PeriodCalendar cal = calendar(Map.of("20240101", "20240105"), "20240105");
+        assertTrue(core.aggregate(dailies, "1", LocalDate.of(2024, 1, 8), cal).isEmpty());
     }
 
     @Test
@@ -63,16 +79,21 @@ class KDJHandlerTest {
                 daily("20240131", 10, 5, 8),
                 daily("20240229", 12, 6, 11),
                 daily("20240328", 14, 7, 13));
-        LocalDate today = LocalDate.of(2024, 4, 1);
-        List<KDJHandler.PeriodBar> months = core.aggregate(dailies, "2", today);
+        LocalDate asOf = LocalDate.of(2024, 4, 1);
+        Map<String, String> lastByKey = Map.of(
+                "202401", "20240131", "202402", "20240229", "202403", "20240329", "2024Q1", "20240329");
+        KDJHandler.PeriodCalendar cal = calendar(lastByKey, "20241231");
+        List<KDJHandler.PeriodBar> months = core.aggregate(dailies, "2", asOf, cal);
         assertEquals(3, months.size());
-        List<KDJHandler.PeriodBar> quarters = core.aggregate(dailies, "3", today);
+        List<KDJHandler.PeriodBar> quarters = core.aggregate(dailies, "3", asOf, cal);
         assertEquals(1, quarters.size());
         assertEquals(0, quarters.get(0).high.compareTo(new BigDecimal("14")));
         assertEquals(0, quarters.get(0).low.compareTo(new BigDecimal("5")));
         assertEquals(0, quarters.get(0).close.compareTo(new BigDecimal("13")));
-        // 季末前一天：Q1未完结，剔除
-        assertTrue(core.aggregate(dailies, "3", LocalDate.of(2024, 3, 31)).isEmpty());
+        // 季中（3/1）：Q1 最后计划交易日 0329 > 最新交易日 → 未完结
+        assertTrue(core.aggregate(dailies, "3", LocalDate.of(2024, 3, 1), cal).isEmpty());
+        // 季末最后一个交易日数据到位（3/29）：Q1 已完结
+        assertEquals(1, core.aggregate(dailies, "3", LocalDate.of(2024, 3, 29), cal).size());
     }
 
     // ---------- calculate ----------
@@ -294,8 +315,9 @@ class KDJHandlerTest {
 
     @Test
     void aggregateDatesWeekSkipsEmptyWeekAndUnfinishedWeek() {
-        // 20240101~0105 一周、下一周无交易日（自然跳过）、0115~0119 一周、0122 本周未完结
-        List<String> dates = List.of("20240102", "20240103", "20240115", "20240117", "20240122");
+        // 0101~0107 一周、0115~0121 一周；0122 周最后计划交易日 0126 > 最新交易日 0124 → 未完结
+        List<String> dates = List.of("20240102", "20240103", "20240115", "20240117",
+                "20240122", "20240126", "20240129");
         List<KDJHandler.PeriodBar> bars = core.aggregateDates(dates, "1", LocalDate.of(2024, 1, 24));
         assertEquals(2, bars.size());
         assertEquals("20240102", bars.get(0).startDate);
@@ -306,7 +328,8 @@ class KDJHandlerTest {
 
     @Test
     void aggregateDatesMonthAndQuarter() {
-        List<String> dates = List.of("20240131", "20240229", "20240328");
+        // 0628 为日历中更远的未来交易日（截断兜底锚点），其周期未完结、不产出
+        List<String> dates = List.of("20240131", "20240229", "20240328", "20240628");
         LocalDate today = LocalDate.of(2024, 4, 1);
         List<KDJHandler.PeriodBar> months = core.aggregateDates(dates, "2", today);
         assertEquals(3, months.size());
@@ -315,8 +338,10 @@ class KDJHandlerTest {
         assertEquals(1, quarters.size());
         assertEquals("20240131", quarters.get(0).startDate);
         assertEquals("20240328", quarters.get(0).endDate);
-        // 季末前一天：Q1 未完结，剔除
-        assertTrue(core.aggregateDates(dates, "3", LocalDate.of(2024, 3, 31)).isEmpty());
+        // 季中（3/1）：Q1 最后计划交易日 0328 > 最新交易日 → 未完结
+        assertTrue(core.aggregateDates(dates, "3", LocalDate.of(2024, 3, 1)).isEmpty());
+        // 季末最后一个交易日数据到位（3/28）：Q1 已完结
+        assertEquals(1, core.aggregateDates(dates, "3", LocalDate.of(2024, 3, 28)).size());
     }
 
     private KDJParam tradeSignalParam() {

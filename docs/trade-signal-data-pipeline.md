@@ -18,7 +18,7 @@ akshare（三源）──► scripts/fetch（取数）──► scripts/adjust�
 | `stock_quote` | 日线 OHLCV：`ADJUST='0'` 原始行 + `ADJUST='1'` 自算前复权行 | 原始行只追加；qfq 行可重算覆盖；每次同步只在收尾阶段由 log 表并入 |
 | `stock_quote_log` | 同步中转表（结构与 stock_quote 完全一致） | 同步分片阶段唯一写入目标；收尾并入主表、对账、备份后 TRUNCATE |
 | `stock_dividend` | 除权除息事件（EX_DATE + 综合因子 k + SOURCE） | 双轨生成：公告日历=权威日历，因子反推=测 k+校验+兜底；同步分片阶段只暂存，收尾统一追加 |
-| `work_day` | 交易日历（`/kdj/periods` 来源） | 从 stock_quote distinct TRADE_DATE 生成 |
+| `work_day` | 交易日历（`/kdj/periods` 来源） | 实际交易日从 stock_quote distinct TRADE_DATE 生成；**未来日期由 akshare 全年日历预置（--seed）**，供"周期最后一个交易日"完结判定；每小时对账清理（--reconcile）删"已过且无行情"的预置行 |
 | `stock_period_bar` | 周/月/季物化聚合（PERIOD_TYPE 1/2/3，OHLC） | scripts 同步收尾物化：常规每股最新 1-2 个已完结周期；除权股全周期重算；首启 `--full` 全量 |
 
 ID 规则：`stock_quote`/`stock_quote_log`=MD5(code:yyyymmdd:adjust)、`stock_dividend`=MD5(code:ex_date)、`work_day`=MD5(market:trade_date)、`stock_period_bar`=自增（幂等靠唯一键 PERIOD_TYPE+CODE+ADJUST+PERIOD_END）；时间戳一律 UNIX 秒（DECIMAL(15,0)）。
@@ -74,7 +74,7 @@ ID 规则：`stock_quote`/`stock_quote_log`=MD5(code:yyyymmdd:adjust)、`stock_d
 4. `/usr/local/bin/trade-signal-backup.sh` 即时备份（mysqldump，需 sudo；失败同样不 truncate）
 5. TRUNCATE stock_quote_log + 清理暂存文件
 
-**周期物化**（`aggregate.period_bar`，finalize 之后）：从 stock_quote 聚合周/月/季 bars 写 stock_period_bar，口径与 Java KDJHandler.aggregate 一致（周=ISO 周周一起、月/季=自然周期；OPEN=首交易日开盘、CLOSE=末交易日收盘、HIGH/LOW=极值、PERIOD_START/END=首末真实交易日；**未完结周期不入表**——判定按周期桶 key < 全局最新交易日所在周期桶 key：含最新交易日的周期（本周/本月/本季）永远跳过，停牌股的未完结部分周期同样不提前入表，下轮自然补物化）。常规增量：每股只 upsert 最近窗口（周 21 天/月 62 天/季 200 天，覆盖最新 1-2 个已完结周期）；近 10 天有除权事件的股（历史 qfq 被 rescale 过）**全周期重算覆盖**。SQL 批量聚合（每 200 只一批 GROUP BY；`--full` 首启走单遍全表 + 流式 upsert，实测单遍 ~8.5 分钟/类型，远优于分批随机 IO）。
+**周期物化**（`aggregate.period_bar`，finalize 之后）：从 stock_quote 聚合周/月/季 bars 写 stock_period_bar，口径与 Java KDJHandler.aggregate 一致（周=ISO 周周一起、月/季=自然周期；OPEN=首交易日开盘、CLOSE=末交易日收盘、HIGH/LOW=极值、PERIOD_START/END=首末真实交易日；**未完结周期不入表**——判定按需求文档 §2.4：该周期最后一个计划交易日（work_day 日历，含未来）≤ 库内最新交易日 且 日历已覆盖该周期之后（截断兜底：种子缺失/跨年未更新按未完结核对），即 `HAVING PKEY <= 最大已完结桶`；停牌股按各自真实最后交易日入表）。常规增量：每股只 upsert 最近窗口（周 21 天/月 62 天/季 200 天，覆盖最新 1-2 个已完结周期）；近 10 天有除权事件的股（历史 qfq 被 rescale 过）**全周期重算覆盖**。SQL 批量聚合（每 200 只一批 GROUP BY；`--full` 首启走单遍全表 + 流式 upsert，实测单遍 ~8.5 分钟/类型，远优于分批随机 IO）。
 
 **周频口径（用户拍板，"东财熔断器+盘中行过滤"方案作废）**：行情源统一新浪、**接受一周延迟**、每周六同步本周未爬数据。原因：新浪无视日期参数每次返回全历史（~15-20s/股），日频全量需 20+h 不可行；东财行情口曾支持小窗口（~3-6s/股）但服务器限流实录不可用。2 路并行后全量预计 **8~15h**。幂等 + flock 防重叠，漏跑下周自然补齐。2026-08-11 起触发机制改为 cron 每日 00:00 + 探针（见 §3.3）：先抓探针股 600519 最新交易日，≤ 主表水位即跳过；**另加 3 天闸门**（最新日期-水位 <3 天不跑重爬，防新浪封 IP，实际为**三日一同步**），不再固定周六。
 
@@ -89,7 +89,7 @@ ID 规则：`stock_quote`/`stock_quote_log`=MD5(code:yyyymmdd:adjust)、`stock_d
 生产实例（服务器）：
 - **探针触发增量**：`/etc/cron.d/trade-signal-daily` → `0 0 * * * ops /home/ops/scripts/run_daily.sh`（**每日 00:00**；该文件必须 root:root 644，否则 cron 拒跑——trade-signal-backup 曾因此踩坑）。wrapper（700 权限）负责装配环境（`NO_PROXY=*`、`DB_PASSWORD` 从 `/etc/trade-signal.env` 经 sudo grep 提取——cron 非交互无 shell 环境）、flock 防重叠、日志按日期分隔追加到 `/home/ops/scripts/daily.log`。开跑前先探针（抓 600519 最近 10 日新浪最新交易日，≤ 主表 `max(trade_date)` 即跳过；另加 3 天闸门：距水位 <3 天不跑重爬，防新浪封 IP）；否则按 新股维护 → 分片 0/2 ‖ 1/2 → finalize → workday → period_bar 物化 → warm_cache 顺序执行。2026-08-11 起由周六 09:17 改为每日 00:00 + 探针 + 3 天闸门。
   **人工手动触发（非常规，2026-08-15 起）**：`FORCE=1 ./run_daily.sh` 仅绕过 3 天闸门（日志标记"人工手动触发（FORCE=1）"），探针失败/无新数据仍跳过；常规 cron 不带 FORCE，行为不变。手动触发后仍需等待分片（数小时）与 finalize 收尾，期间勿再触发（flock 会拒）。
-- **物化自愈**：`/etc/cron.d/trade-signal-period-bar` → `25 * * * * ops /home/ops/scripts/ensure_period_bar.sh`（**每小时 :25**）。检查 work_day 最新已完结周期 vs 物化表 `max(period_end)`，落后则补跑 `aggregate.period_bar`（分钟级）；与 run_daily **共用 `.run_daily.lock`（flock -n）**，run_daily 运行中跳过，杜绝并发写。用途：物化失败后缺口从"等下一个交易日"压缩到"最多 1 小时"，并兜住长假场景。
+- **物化自愈**：`/etc/cron.d/trade-signal-period-bar` → `25 * * * * ops /home/ops/scripts/ensure_period_bar.sh`（**每小时 :25**）。执行顺序：① 日历种子（akshare 全年交易日，**每日一次守卫** `.workday_seed.ts`）→ ② **对账清理（每小时，与同步与否无关）**：删"已过且该市场全市场无行情"的日历行（临时休市/节假日调整修正）→ ③ 检查 work_day 最新已完结周期 vs 物化表 `max(period_end)`，落后则补跑 `aggregate.period_bar`（分钟级）。与 run_daily **共用 `.run_daily.lock`（flock -n）**，run_daily 运行中跳过，杜绝并发写。用途：物化失败后缺口从"等下一个交易日"压缩到"最多 1 小时"，并兜住长假场景；run_daily 收尾同样执行种子+对账。
 - 本机 Windows 开发机：任务计划同理（仅作开发，生产在服务器）。
 
 ## 4. 已知风险与待办

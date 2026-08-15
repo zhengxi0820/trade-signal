@@ -104,6 +104,15 @@ echo "===== $(date "+%Y-%m-%d %H:%M:%S") 探针最新 $PROBE_OUT > 水位 ${WATE
   echo "===== $(date "+%Y-%m-%d %H:%M:%S") workday 结束 rc=$rc ====="
 } >> daily.log 2>&1
 
+# 日历种子（每日守卫，akshare 网络）与对账清理（不管同步与否都校正日历）
+SEED_MARKER=/home/ops/scripts/.workday_seed.ts
+if [ ! -f "$SEED_MARKER" ] || [ $(( $(date +%s) - $(stat -c %Y "$SEED_MARKER") )) -gt 72000 ]; then
+  if .venv/bin/python -m adjust.workday --seed >> daily.log 2>&1; then
+    touch "$SEED_MARKER"
+  fi
+fi
+.venv/bin/python -m adjust.workday --reconcile >> daily.log 2>&1
+
 # 周期物化（常规周增量：每股最新 1-2 个已完结周期 + 本周除权股全周期重算）
 {
   echo "===== $(date "+%Y-%m-%d %H:%M:%S") period_bar 物化开始 ====="

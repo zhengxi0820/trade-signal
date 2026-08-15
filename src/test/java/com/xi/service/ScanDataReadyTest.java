@@ -30,12 +30,15 @@ class ScanDataReadyTest {
     @BeforeEach
     void setup() {
         kdjServiceImpl.resetReadyCaches();
+        jdbc.update("delete from stock_quote");
         jdbc.update("delete from stock_period_bar");
         jdbc.update("delete from work_day");
         // 本周（20260803-20260807，周一至周五）为最新已完结周
         for (String d : List.of("20260803", "20260804", "20260805", "20260806", "20260807")) {
             jdbc.update("insert into work_day (MARKET, TRADE_DATE) values ('SH', ?)", d);
         }
+        // 未来日历锚点：截断兜底要求日历覆盖该周之后才能确认完结
+        jdbc.update("insert into work_day (MARKET, TRADE_DATE) values ('SH', ?)", "20260810");
     }
 
     private void insertWeeklyBar(String start, String end) {

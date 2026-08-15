@@ -57,6 +57,21 @@ public class KDJHandler {
     }
 
     /**
+     * 周期日历（纯数据载体，由 service 层从 work_day 构建）：
+     * 周期桶 key → 该周期最后一个计划交易日（yyyymmdd）+ 日历最大日期。
+     * maxDate 用于截断兜底：日历未覆盖某周期之后时，该周期一律按未完结核对处理。
+     */
+    public static class PeriodCalendar {
+        public final Map<String, String> lastDayByKey;
+        public final String maxDate;
+
+        public PeriodCalendar(Map<String, String> lastDayByKey, String maxDate) {
+            this.lastDayByKey = lastDayByKey;
+            this.maxDate = maxDate;
+        }
+    }
+
+    /**
      * K、D交汇点。
      */
     public static class CrossPoint {
@@ -75,14 +90,16 @@ public class KDJHandler {
      * 日线聚合为指定周期的K线序列。
      * 周=ISO周（周一起），月=自然月，季=自然季；
      * high=周期内最大high，low=周期内最小low，close=周期最后交易日close；
-     * 未完结周期（自然结束日未过）剔除；周期内无交易日自然跳过。
+     * 未完结周期（该周期最后一个计划交易日 > 最新交易日）剔除；周期内无交易日自然跳过。
      *
      * @param dailies 日线序列，tradeDate升序
      * @param kdjType "0"=日、"1"=周、"2"=月、"3"=季
-     * @param today   当前自然日（判断周期是否完结，便于测试注入）
+     * @param asOf    库内最新交易日（判断周期是否完结：该周期最后一个计划交易日 ≤ asOf 即完结）
+     * @param calendar 周期日历（work_day 未来感知；null 时周/月/季一律按未完结核对处理）
      * @return 周期K线序列，时间升序
      */
-    public List<PeriodBar> aggregate(List<StockQuoteDO> dailies, String kdjType, LocalDate today) {
+    public List<PeriodBar> aggregate(List<StockQuoteDO> dailies, String kdjType, LocalDate asOf,
+                                     PeriodCalendar calendar) {
         Map<String, List<StockQuoteDO>> groups = new LinkedHashMap<>();
         for (StockQuoteDO daily : dailies) {
             LocalDate date = LocalDate.parse(daily.getTradeDate(), DATE_FORMAT);
@@ -91,7 +108,9 @@ public class KDJHandler {
         List<PeriodBar> bars = new ArrayList<>();
         for (Map.Entry<String, List<StockQuoteDO>> entry : groups.entrySet()) {
             List<StockQuoteDO> days = entry.getValue();
-            if (!"0".equals(kdjType) && !isPeriodFinished(days, kdjType, today)) {
+            if (!"0".equals(kdjType)
+                    && !isPeriodFinished(calendar == null ? null : calendar.lastDayByKey.get(entry.getKey()),
+                            kdjType, asOf, calendar == null ? null : calendar.maxDate)) {
                 continue;
             }
             PeriodBar bar = new PeriodBar();
@@ -109,31 +128,46 @@ public class KDJHandler {
     /**
      * 由交易日历（work_day）推导可选周期列表。与 aggregate 同一套周期口径：
      * 周=ISO周、月=自然月、季=自然季；未完结周期剔除；周期内无交易日自然跳过。
-     * 交易日历可能包含未来日期，晚于 today 的一律剔除（日线也受此影响）。
+     * 交易日历包含未来日期；只有"该周期最后一个计划交易日 ≤ asOf"的周期才返回。
      * 返回的 PeriodBar 只填 startDate/endDate，不带价格。
      *
      * @param tradeDates 交易日序列，yyyymmdd 升序
      * @param kdjType    "0"=日、"1"=周、"2"=月、"3"=季
-     * @param today      当前自然日
+     * @param asOf       库内最新交易日（完结锚点）
      * @return 已完结周期序列，时间升序
      */
-    public List<PeriodBar> aggregateDates(List<String> tradeDates, String kdjType, LocalDate today) {
+    public List<PeriodBar> aggregateDates(List<String> tradeDates, String kdjType, LocalDate asOf) {
         Map<String, List<String>> groups = new LinkedHashMap<>();
+        String calendarMax = null;
         for (String tradeDate : tradeDates) {
             LocalDate date = LocalDate.parse(tradeDate, DATE_FORMAT);
-            if (date.isAfter(today)) {
+            // 日线：日历中的未来日期（> 最新交易日）不产出可选周期
+            if ("0".equals(kdjType) && date.isAfter(asOf)) {
                 continue;
             }
             groups.computeIfAbsent(periodKey(date, kdjType), k -> new ArrayList<>()).add(tradeDate);
+            if (calendarMax == null || tradeDate.compareTo(calendarMax) > 0) {
+                calendarMax = tradeDate;
+            }
         }
         List<PeriodBar> bars = new ArrayList<>();
         for (List<String> days : groups.values()) {
-            if (!"0".equals(kdjType) && !isPeriodFinished(days.get(days.size() - 1), kdjType, today)) {
+            String first = days.get(0);
+            String last = days.get(0);
+            for (String d : days) {
+                if (d.compareTo(last) > 0) {
+                    last = d;
+                }
+                if (d.compareTo(first) < 0) {
+                    first = d;
+                }
+            }
+            if (!"0".equals(kdjType) && !isPeriodFinished(last, kdjType, asOf, calendarMax)) {
                 continue;
             }
             PeriodBar bar = new PeriodBar();
-            bar.startDate = days.get(0);
-            bar.endDate = days.get(days.size() - 1);
+            bar.startDate = first;
+            bar.endDate = last;
             bars.add(bar);
         }
         return bars;
@@ -300,7 +334,8 @@ public class KDJHandler {
         return true;
     }
 
-    private String periodKey(LocalDate date, String kdjType) {
+    /** 周期桶 key：周=该周周一 yyyymmdd、月=yyyymm、季=yyyyQn、日=yyyymmdd。 */
+    public static String periodKey(LocalDate date, String kdjType) {
         switch (kdjType) {
             case "1":
                 LocalDate monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
@@ -315,28 +350,21 @@ public class KDJHandler {
         }
     }
 
-    private boolean isPeriodFinished(List<StockQuoteDO> days, String kdjType, LocalDate today) {
-        return isPeriodFinished(days.get(days.size() - 1).getTradeDate(), kdjType, today);
-    }
-
-    private boolean isPeriodFinished(String lastTradeDate, String kdjType, LocalDate today) {
-        LocalDate lastDay = LocalDate.parse(lastTradeDate, DATE_FORMAT);
-        LocalDate periodEnd;
-        switch (kdjType) {
-            case "1":
-                periodEnd = lastDay.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY));
-                break;
-            case "2":
-                periodEnd = lastDay.with(TemporalAdjusters.lastDayOfMonth());
-                break;
-            case "3":
-                int quarterEndMonth = ((lastDay.getMonthValue() - 1) / 3 + 1) * 3;
-                periodEnd = LocalDate.of(lastDay.getYear(), quarterEndMonth, 1)
-                        .with(TemporalAdjusters.lastDayOfMonth());
-                break;
-            default:
-                return true;
+    /**
+     * 周期是否已完结（口径 = 需求文档 §2.4 修订版）：
+     * 该周期最后一个计划交易日 ≤ 库内最新交易日 asOf，且日历已覆盖该周期之后
+     * （bucketLast < calendarMax，截断兜底：种子缺失/跨年未更新时按未完结核对）。
+     */
+    private boolean isPeriodFinished(String bucketLast, String kdjType, LocalDate asOf, String calendarMax) {
+        if ("0".equals(kdjType)) {
+            return true;
         }
-        return today.isAfter(periodEnd);
+        if (bucketLast == null || calendarMax == null) {
+            return false;
+        }
+        if (bucketLast.compareTo(calendarMax) >= 0) {
+            return false;
+        }
+        return bucketLast.compareTo(asOf.format(DATE_FORMAT)) <= 0;
     }
 }

@@ -64,11 +64,42 @@ class KDJScanWindowCacheTest {
         scanBarsCache.clear();
         jdbc.update("delete from stock_quote");
         jdbc.update("delete from stock_info");
+        jdbc.update("delete from work_day");
         for (String code : CODES) {
             jdbc.update("insert into stock_info(CODE, NAME, MARKET, BOARD_TYPE) values (?,?,?,?)",
                     code, "测试" + code, "SH", "0");
         }
         seedQuotes();
+        // work_day 交易日历：与行情同 7000 个工作日 + 未来日历锚点（DATA_END 下一周周一），
+        // 保证 DATA_END 所在周/月可通过"截断兜底"判定完结，且与 service 侧 periodCalendar 同源
+        List<LocalDate> workDates = new ArrayList<>(DAYS);
+        LocalDate wd = LocalDate.parse(DATA_END, FMT);
+        while (workDates.size() < DAYS) {
+            if (wd.getDayOfWeek() != DayOfWeek.SATURDAY && wd.getDayOfWeek() != DayOfWeek.SUNDAY) {
+                workDates.add(wd);
+            }
+            wd = wd.minusDays(1);
+        }
+        for (int i = workDates.size() - 1; i >= 0; i--) {
+            jdbc.update("insert into work_day (MARKET, TRADE_DATE) values ('SH', ?)",
+                    workDates.get(i).format(FMT));
+        }
+        jdbc.update("insert into work_day (MARKET, TRADE_DATE) values ('SH', ?)", "20260803");
+    }
+
+    /** 与 service 侧 periodCalendar 同口径的日历（基于同一 work_day）。 */
+    private KDJHandler.PeriodCalendar fixtureCalendar(String kdjType) {
+        List<String> dates = jdbc.queryForList("select TRADE_DATE from work_day", String.class);
+        Map<String, String> lastByKey = new HashMap<>();
+        String maxDate = null;
+        for (String d : dates) {
+            String key = KDJHandler.periodKey(LocalDate.parse(d, FMT), kdjType);
+            lastByKey.merge(key, d, (a, b) -> a.compareTo(b) >= 0 ? a : b);
+            if (maxDate == null || d.compareTo(maxDate) > 0) {
+                maxDate = d;
+            }
+        }
+        return new KDJHandler.PeriodCalendar(lastByKey, maxDate);
     }
 
     /**
@@ -214,7 +245,8 @@ class KDJScanWindowCacheTest {
             query.setCode(code);
             query.setAdjust("1");
             List<StockQuoteDO> full = stockQuoteMapper.queryAll(query);
-            List<KDJHandler.PeriodBar> bars = handler.aggregate(full, kdjType, LocalDate.now());
+            List<KDJHandler.PeriodBar> bars = handler.aggregate(full, kdjType,
+                    LocalDate.parse(DATA_END, FMT), fixtureCalendar(kdjType));
             if (endInclusive != null) {
                 bars = bars.stream().filter(b -> b.endDate.compareTo(endInclusive) <= 0)
                         .collect(Collectors.toList());
@@ -290,7 +322,8 @@ class KDJScanWindowCacheTest {
             query.setAdjust("1");
             List<StockQuoteDO> full = stockQuoteMapper.queryAll(query);
             for (String kdjType : new String[]{"2", "3"}) {
-                List<KDJHandler.PeriodBar> expected = handler.aggregate(full, kdjType, today);
+                List<KDJHandler.PeriodBar> expected = handler.aggregate(full, kdjType,
+                        LocalDate.parse(DATA_END, FMT), fixtureCalendar(kdjType));
                 List<PeriodBarDTO> actual = "2".equals(kdjType)
                         ? stockQuoteMapper.queryMonthlyBars(code, "1", "19900101", currentMonth)
                         : stockQuoteMapper.queryQuarterlyBars(code, "1", "19900101", currentQuarter);
@@ -318,14 +351,14 @@ class KDJScanWindowCacheTest {
     @Test
     void aggTablePathMatchesFullHistory() {
         // 灌物化表：周 + 月 + 季，bars 由 handler 全历史聚合（等价于 scripts 物化口径）
-        LocalDate today = LocalDate.now();
         for (String code : CODES) {
             StockQuoteQuery query = new StockQuoteQuery();
             query.setCode(code);
             query.setAdjust("1");
             List<StockQuoteDO> full = stockQuoteMapper.queryAll(query);
             for (String kdjType : new String[]{"1", "2", "3"}) {
-                for (KDJHandler.PeriodBar bar : handler.aggregate(full, kdjType, today)) {
+                for (KDJHandler.PeriodBar bar : handler.aggregate(full, kdjType,
+                        LocalDate.parse(DATA_END, FMT), fixtureCalendar(kdjType))) {
                     jdbc.update("insert into stock_period_bar(PERIOD_TYPE,CODE,ADJUST,PERIOD_START,PERIOD_END,OPEN,HIGH,LOW,CLOSE)"
                                     + " values (?,?,?,?,?,?,?,?,?)",
                             kdjType, code, "1", bar.startDate, bar.endDate,

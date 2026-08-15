@@ -5,10 +5,10 @@
 - 周 = ISO 周（周一起，YEARWEEK(...,3)）；月 = 自然月；季 = 自然季
 - OPEN = 周期首交易日开盘、CLOSE = 周期末交易日收盘、HIGH/LOW = 周期内极值
 - PERIOD_START/END = 周期首/末真实交易日（yyyymmdd）
-- **未完结周期不入表**：判定规则 = 周期桶 key < 全局最新交易日所在周期桶 key
-  （HAVING {pkey} < max_key）。即含最新交易日的那个周期（本周/本月/本季）永远不物化，
-  停牌股也不例外（其"未完结部分周期"不会提前入表），下轮数据进来后自然补物化——
-  与"接受一周延迟"的周频口径自洽。
+- **未完结周期不入表**（口径 = 需求文档 §2.4 修订版）：周期已完结 = 该周期最后一个
+  计划交易日（按 work_day 日历，含未来）≤ 库内最新交易日，且日历已覆盖该周期之后
+  （截断兜底：种子缺失/跨年未更新时按未完结核对）。物化判定 HAVING PKEY <= max_complete_key。
+  停牌股按各自真实最后交易日（PE）入表。
 - 表无 VOLUME 列（schema 契约），ID 自增，幂等靠唯一键 (PERIOD_TYPE,CODE,ADJUST,PERIOD_END)。
 
 批量口径：SQL 聚合，每 BATCH_SIZE=200 只一批 GROUP BY，不逐股 python 循环。
@@ -44,16 +44,31 @@ PERIOD_CONF = {
 }
 
 
-def _max_period_key(max_date: str, ptype: str) -> str:
-    """全局最新交易日的周期桶 key（与 PERIOD_CONF 分组键同口径）：
+def _period_key(trade_date: str, ptype: str) -> str:
+    """周期桶 key（与 PERIOD_CONF 分组键同口径）：
     周 = ISO 年周（YEARWEEK mode 3）；月 = yyyymm；季 = yyyyQn。"""
     if ptype == "1":
-        d = date(int(max_date[:4]), int(max_date[4:6]), int(max_date[6:8]))
+        d = date(int(trade_date[:4]), int(trade_date[4:6]), int(trade_date[6:8]))
         iso = d.isocalendar()
         return f"{iso[0]}{iso[1]:02d}"
     if ptype == "2":
-        return max_date[:6]
-    return f"{max_date[:4]}Q{(int(max_date[4:6]) + 2) // 3}"
+        return trade_date[:6]
+    return f"{trade_date[:4]}Q{(int(trade_date[4:6]) + 2) // 3}"
+
+
+def _max_complete_key(max_date: str, ptype: str, calendar_dates) -> str | None:
+    """最大已完结周期桶：桶内最后一个计划交易日 ≤ 库内最新交易日，且 < 日历最大日
+    （截断兜底：日历未覆盖该桶之后时按未完结核对，避免种子缺失/跨年未更新导致误完结）。"""
+    bucket_last = {}
+    for d in calendar_dates:
+        k = _period_key(d, ptype)
+        if k not in bucket_last or d > bucket_last[k]:
+            bucket_last[k] = d
+    if not bucket_last:
+        return None
+    cal_max = max(calendar_dates)
+    complete = [k for k, last in bucket_last.items() if last <= max_date and last < cal_max]
+    return max(complete) if complete else None
 
 AGG_SQL = """
     SELECT g.CODE, g.ADJUST, g.PS, g.PE, o.OPEN, g.H, g.L, c.CLOSE
@@ -64,7 +79,7 @@ AGG_SQL = """
         FROM stock_quote
         WHERE CODE IN ({codes_ph}) {cutoff}
         GROUP BY CODE, ADJUST, PKEY
-        HAVING PKEY < '{max_key}'
+        HAVING PKEY <= '{max_key}'
     ) g
     JOIN stock_quote o ON o.CODE=g.CODE AND o.ADJUST=g.ADJUST AND o.TRADE_DATE=g.PS
     JOIN stock_quote c ON c.CODE=g.CODE AND c.ADJUST=g.ADJUST AND c.TRADE_DATE=g.PE
@@ -79,7 +94,7 @@ FULL_AGG_SQL = """
                MAX(HIGH) AS H, MIN(LOW) AS L
         FROM stock_quote
         GROUP BY CODE, ADJUST, PKEY
-        HAVING PKEY < '{max_key}'
+        HAVING PKEY <= '{max_key}'
     ) g
     JOIN stock_quote o ON o.CODE=g.CODE AND o.ADJUST=g.ADJUST AND o.TRADE_DATE=g.PS
     JOIN stock_quote c ON c.CODE=g.CODE AND c.ADJUST=g.ADJUST AND c.TRADE_DATE=g.PE
@@ -115,15 +130,23 @@ def _materialize_full(conn) -> dict:
     if not max_date:
         print("[period_bar] stock_quote 为空，跳过全量物化", flush=True)
         return stats
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT TRADE_DATE FROM work_day")
+        calendar_dates = [r[0] for r in cur.fetchall()]
     try:
         for ptype, (pkey, _) in PERIOD_CONF.items():
             t0 = time.time()
             now = unix_ts()
             total = 0
+            max_key = _max_complete_key(max_date, ptype, calendar_dates)
+            if max_key is None:
+                print(f"[period_bar] type={ptype} 无可完结周期（日历缺失/截断？），跳过", flush=True)
+                stats[ptype] = 0
+                continue
             # 全量查询不带绑定参数，pymysql 不做 % 转义，需把 %% 还原为 %
             sql = FULL_AGG_SQL.format(
                 pkey=pkey.replace("%%", "%"),
-                max_key=_max_period_key(max_date, ptype),
+                max_key=max_key,
             )
             cur = conn.cursor(pymysql.cursors.SSCursor)
             try:
@@ -173,10 +196,17 @@ def materialize(conn, full: bool) -> dict:
     if not max_date:
         print("[period_bar] stock_quote 为空，跳过物化", flush=True)
         return stats
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT TRADE_DATE FROM work_day")
+        calendar_dates = [r[0] for r in cur.fetchall()]
     now = unix_ts()
     for ptype, (pkey, window_days) in PERIOD_CONF.items():
         cutoff_date = None if full else (date.today() - timedelta(days=window_days)).strftime("%Y%m%d")
-        max_key = _max_period_key(max_date, ptype)
+        max_key = _max_complete_key(max_date, ptype, calendar_dates)
+        if max_key is None:
+            print(f"[period_bar] type={ptype} 无可完结周期（日历缺失/截断？），跳过", flush=True)
+            stats[ptype] = 0
+            continue
         total = 0
         nb = (len(codes) + BATCH_SIZE - 1) // BATCH_SIZE
         for bi, batch in enumerate(batched(codes, BATCH_SIZE), 1):

@@ -8,7 +8,11 @@
 - **未完结周期不入表**（口径 = 需求文档 §2.4 修订版）：周期已完结 = 该周期最后一个
   计划交易日（按 work_day 日历，含未来）≤ 库内最新交易日，且日历已覆盖该周期之后
   （截断兜底：种子缺失/跨年未更新时按未完结核对）。物化判定 HAVING PKEY <= max_complete_key。
-  停牌股按各自真实最后交易日（PE）入表。
+  每股只要周期内 ≥1 个交易日即物化（首/末交易日 = 该股真实首/末交易日，停牌股不丢 K 线）。
+- **增量窗口对齐周期边界**：窗口起点先"今天 - 窗口天数"再向下取整到周期第一天
+  （周→周一、月→1号、季→季首），杜绝 cutoff 落在周期中间把边界周期截断成部分 bar。
+- **窗口内先删后插（同事务提交）**：对重算的每批股票，先删该批在窗口内的旧行再插入新行，
+  数据后补不会残留旧行（同一周期绝不出现两行）；除权事件股全周期重算时删该股该类型全部行重建。
 - 表无 VOLUME 列（schema 契约），ID 自增，幂等靠唯一键 (PERIOD_TYPE,CODE,ADJUST,PERIOD_END)。
 
 批量口径：SQL 聚合，每 BATCH_SIZE=200 只一批 GROUP BY，不逐股 python 循环。
@@ -70,6 +74,20 @@ def _max_complete_key(max_date: str, ptype: str, calendar_dates) -> str | None:
     complete = [k for k, last in bucket_last.items() if last <= max_date and last < cal_max]
     return max(complete) if complete else None
 
+
+def _align_window_start(cutoff_date: str, ptype: str) -> str:
+    """增量窗口起点对齐到周期第一天（周→周一、月→1号、季→季首），
+    避免 cutoff 落在周期中间导致边界周期被截断成部分 bar。"""
+    d = date(int(cutoff_date[:4]), int(cutoff_date[4:6]), int(cutoff_date[6:8]))
+    if ptype == "1":
+        d = d - timedelta(days=d.weekday())
+    elif ptype == "2":
+        d = d.replace(day=1)
+    else:
+        month = ((d.month - 1) // 3) * 3 + 1
+        d = d.replace(month=month, day=1)
+    return d.strftime("%Y%m%d")
+
 AGG_SQL = """
     SELECT g.CODE, g.ADJUST, g.PS, g.PE, o.OPEN, g.H, g.L, c.CLOSE
     FROM (
@@ -100,13 +118,10 @@ FULL_AGG_SQL = """
     JOIN stock_quote c ON c.CODE=g.CODE AND c.ADJUST=g.ADJUST AND c.TRADE_DATE=g.PE
 """
 
-UPSERT_SQL = """
+INSERT_SQL = """
     INSERT INTO stock_period_bar
         (PERIOD_TYPE, CODE, ADJUST, PERIOD_START, PERIOD_END, OPEN, HIGH, LOW, CLOSE, CREATED_AT, UPDATED_AT)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    ON DUPLICATE KEY UPDATE
-        PERIOD_START=VALUES(PERIOD_START), OPEN=VALUES(OPEN), HIGH=VALUES(HIGH),
-        LOW=VALUES(LOW), CLOSE=VALUES(CLOSE), UPDATED_AT=VALUES(UPDATED_AT)
 """
 
 
@@ -143,6 +158,10 @@ def _materialize_full(conn) -> dict:
                 print(f"[period_bar] type={ptype} 无可完结周期（日历缺失/截断？），跳过", flush=True)
                 stats[ptype] = 0
                 continue
+            # 全量重建：先删该类型全部旧行，再流式插入（先删后插，杜绝残留）
+            with wconn.cursor() as w:
+                w.execute("DELETE FROM stock_period_bar WHERE PERIOD_TYPE=%s", (ptype,))
+                wconn.commit()
             # 全量查询不带绑定参数，pymysql 不做 % 转义，需把 %% 还原为 %
             sql = FULL_AGG_SQL.format(
                 pkey=pkey.replace("%%", "%"),
@@ -157,14 +176,14 @@ def _materialize_full(conn) -> dict:
                     buf.append((ptype, code, adjust, ps, pe, o, h, l, c, now, now))
                     if len(buf) >= 5000:
                         with wconn.cursor() as w:
-                            w.executemany(UPSERT_SQL, buf)
+                            w.executemany(INSERT_SQL, buf)
                         wconn.commit()
                         total += len(buf)
                         print(f"[period_bar] type={ptype} 流式 upsert 累计 {total} 行 {time.time()-t0:.0f}s", flush=True)
                         buf = []
                 if buf:
                     with wconn.cursor() as w:
-                        w.executemany(UPSERT_SQL, buf)
+                        w.executemany(INSERT_SQL, buf)
                     wconn.commit()
                     total += len(buf)
             finally:
@@ -202,6 +221,8 @@ def materialize(conn, full: bool) -> dict:
     now = unix_ts()
     for ptype, (pkey, window_days) in PERIOD_CONF.items():
         cutoff_date = None if full else (date.today() - timedelta(days=window_days)).strftime("%Y%m%d")
+        if cutoff_date:
+            cutoff_date = _align_window_start(cutoff_date, ptype)
         max_key = _max_complete_key(max_date, ptype, calendar_dates)
         if max_key is None:
             print(f"[period_bar] type={ptype} 无可完结周期（日历缺失/截断？），跳过", flush=True)
@@ -229,13 +250,29 @@ def materialize(conn, full: bool) -> dict:
                 )
                 params = list(group_codes) + ([cutoff] if cutoff else [])
                 with conn.cursor() as cur:
+                    # 窗口内先删后插（同事务提交）：数据后补不会残留旧行；
+                    # 事件股全周期重算时删该股该类型全部行再重建
+                    delete_ph = ",".join(["%s"] * len(group_codes))
+                    if cutoff:
+                        cur.execute(
+                            "DELETE FROM stock_period_bar WHERE PERIOD_TYPE=%s AND CODE IN ("
+                            + delete_ph + ") AND PERIOD_END >= %s",
+                            [ptype] + group_codes + [cutoff],
+                        )
+                    else:
+                        cur.execute(
+                            "DELETE FROM stock_period_bar WHERE PERIOD_TYPE=%s AND CODE IN ("
+                            + delete_ph + ")",
+                            [ptype] + group_codes,
+                        )
                     cur.execute(sql, params)
                     rows = cur.fetchall()
                     if rows:
-                        cur.executemany(UPSERT_SQL, [
+                        cur.executemany(INSERT_SQL, [
                             (ptype, code, adjust, ps, pe, o, h, l, c, now, now)
                             for code, adjust, ps, pe, o, h, l, c in rows
                         ])
+                    conn.commit()
                 total += len(rows)
             print(f"[period_bar] type={ptype} 批 {bi}/{nb} +{total} 行 {time.time()-t_b:.1f}s", flush=True)
         conn.commit()

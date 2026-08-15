@@ -88,6 +88,7 @@ ID 规则：`stock_quote`/`stock_quote_log`=MD5(code:yyyymmdd:adjust)、`stock_d
 
 生产实例（服务器）：
 - **探针触发增量**：`/etc/cron.d/trade-signal-daily` → `0 0 * * * ops /home/ops/scripts/run_daily.sh`（**每日 00:00**；该文件必须 root:root 644，否则 cron 拒跑——trade-signal-backup 曾因此踩坑）。wrapper（700 权限）负责装配环境（`NO_PROXY=*`、`DB_PASSWORD` 从 `/etc/trade-signal.env` 经 sudo grep 提取——cron 非交互无 shell 环境）、flock 防重叠、日志按日期分隔追加到 `/home/ops/scripts/daily.log`。开跑前先探针（抓 600519 最近 10 日新浪最新交易日，≤ 主表 `max(trade_date)` 即跳过；另加 3 天闸门：距水位 <3 天不跑重爬，防新浪封 IP）；否则按 新股维护 → 分片 0/2 ‖ 1/2 → finalize → workday → period_bar 物化 → warm_cache 顺序执行。2026-08-11 起由周六 09:17 改为每日 00:00 + 探针 + 3 天闸门。
+  **人工手动触发（非常规，2026-08-15 起）**：`FORCE=1 ./run_daily.sh` 仅绕过 3 天闸门（日志标记"人工手动触发（FORCE=1）"），探针失败/无新数据仍跳过；常规 cron 不带 FORCE，行为不变。手动触发后仍需等待分片（数小时）与 finalize 收尾，期间勿再触发（flock 会拒）。
 - **物化自愈**：`/etc/cron.d/trade-signal-period-bar` → `25 * * * * ops /home/ops/scripts/ensure_period_bar.sh`（**每小时 :25**）。检查 work_day 最新已完结周期 vs 物化表 `max(period_end)`，落后则补跑 `aggregate.period_bar`（分钟级）；与 run_daily **共用 `.run_daily.lock`（flock -n）**，run_daily 运行中跳过，杜绝并发写。用途：物化失败后缺口从"等下一个交易日"压缩到"最多 1 小时"，并兜住长假场景。
 - 本机 Windows 开发机：任务计划同理（仅作开发，生产在服务器）。
 

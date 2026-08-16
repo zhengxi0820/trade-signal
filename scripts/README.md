@@ -40,8 +40,11 @@ nohup .venv/bin/python full_backfill.py > full_backfill.log 2>&1 &
 # 只读验证（事件判定回归：4 只纯反推 + 万科双轨；不写库）
 python verify_fix.py
 
-# 交易日历：从 stock_quote 生成 work_day
+# 交易日历：实际日从 stock_quote 生成；未来日由 akshare 全年日历预置（--seed，每日一次守卫）
+#           每小时对账清理（--reconcile，删"已过且全市场无行情"的预置行，与同步与否无关）
 python -m adjust.workday
+python -m adjust.workday --seed
+python -m adjust.workday --reconcile
 
 # 新股维护（同步前置步骤）：名单刷新 → 新增/自愈检测 → 全历史回填 → 登记 stock_info
 python -m fetch.new_stocks --dry-run    # 只检测打印不写库；--simulate CODE 模拟新增分支
@@ -54,12 +57,20 @@ python -m fetch.daily --finalize     # 收尾：事件统一执行+rescale → �
 python -m fetch.daily --codes 600519 # 手工调试：单股直写主表（旧行为）
 python -m fetch.daily --all          # 单线程直写主表（应急兜底，不推荐周跑用）
 
-# 周期物化（stock_period_bar 周/月/季）：常规增量；首启/重建用 --full（单遍全表流式）
+# 周期物化（stock_period_bar 周/月/季）：
+#   增量窗口起点对齐周期第一天（周→周一/月→1号/季→季首），写入为"窗口内先删后插"（同事务），
+#   数据后补不残留旧行、同一周期绝不两行；每股周期内 ≥1 交易日即物化（停牌股不丢 K 线）
 python -m aggregate.period_bar
 python -m aggregate.period_bar --full
+# 物化表脏数据修复（全量重建，持 .run_daily.lock 防并发）：
+nohup ./rebuild_period_bar.sh > period_bar_full_rebuild.log 2>&1 &
+# 纯函数单元测试（窗口对齐 / 周期桶 / 最大已完结桶，无 pytest 依赖）：
+python tests/test_period_bar.py
 # 服务器由 /etc/cron.d/trade-signal-daily 触发（每日 00:00 探针 + 3 天闸门，防新浪封 IP；wrapper run_daily.sh：
 # flock → 探针（无新数据/间隔不足跳过）→ fetch.new_stocks 新股维护 → 分片 0/2 ‖ 1/2 → finalize → adjust.workday
-# → aggregate.period_bar → warm_cache 预热，日志 daily.log）；另有每小时 ensure_period_bar.sh 物化自愈（与 run_daily 共用锁）、每 10 分钟 ensure_warm.sh 重启自动预热（应用重启后自动触发 warm_cache，防并发用 .warm.lock）；
+# → aggregate.period_bar → warm_cache 预热，日志 daily.log；人工强制触发：FORCE=1 ./run_daily.sh（仅绕过三日闸门，非常规）
+# 另有每小时 ensure_period_bar.sh 物化自愈（日历种子+对账清理+BEHIND 补物化，与 run_daily 共用锁）、
+# 每 10 分钟 ensure_warm.sh 重启自动预热（应用重启后自动触发 warm_cache，防并发用 .warm.lock）；
 # 东财行情口已退出生产（限流实录），公告日历保留
 ```
 
@@ -73,6 +84,8 @@ adjust/  factor.py（阶梯+五道闸事件判定+k拟合，纯函数） merge.p
          backfill.py（初算+对拍+事件数保险） incremental.py（增量复权，支持分片暂存）
          workday.py（交易日历）
 aggregate/ period_bar.py（周/月/季物化聚合，--full 全量）
+tests/ test_period_bar.py（物化纯函数单元测试）
+rebuild_period_bar.sh 物化表全量重建（持锁）
 pilot.py 试点编排入口
 verify_fix.py 事件判定只读验证（纯反推回归 + 万科双轨）
 full_backfill.py 全量历史回填（断点续跑 + 事件数保险）

@@ -3,13 +3,13 @@ const { createApp } = Vue;
 // 图表默认一屏展示的周期数
 const WINDOW_SIZE = 60;
 
-// K/D/J 线条颜色（K 黄、D 紫、J 蓝）
-const COLOR_K = '#E6A23C';
-const COLOR_D = '#8E44AD';
-const COLOR_J = '#2E86DE';
+// K/D/J 线条颜色（苹果风中间档：K 橙、D 紫、J 蓝）
+const COLOR_K = '#EA7A38';
+const COLOR_D = '#8A51C3';
+const COLOR_J = '#4CA2F7';
 // 金叉锚图标颜色（死叉用灰）
-const COLOR_ANCHOR_GOLD = '#D4A017';
-const COLOR_ANCHOR_GRAY = '#909399';
+const COLOR_ANCHOR_GOLD = '#CC7F1A';
+const COLOR_ANCHOR_GRAY = '#86868B';
 // 锚形图标（path：圆环 + 竖杆 + 横杆 + 双锚爪）
 const ANCHOR_PATH = 'path://M12 3a2 2 0 1 1 -0.01 0Z M12 7v13 M8 10h8 M5 13c0 4.5 3 7 7 7s7-2.5 7-7';
 
@@ -621,7 +621,7 @@ createApp({
           id: 'gl' + glId++,
           type: 'rect', z: 1, silent: true,
           shape: { x: gl, y: gt, width: gw, height: gh },
-          style: { fill: 'none', stroke: '#dcdfe6', lineWidth: 1 }
+          style: { fill: 'none', stroke: '#E4E4E9', lineWidth: 1 }
         });
         for (let r = 1; r < rows_; r++) {
           const y = gt + (gh * r) / rows_;
@@ -629,7 +629,7 @@ createApp({
             id: 'gl' + glId++,
             type: 'line', z: 1, silent: true,
             shape: { x1: gl, y1: y, x2: gl + gw, y2: y },
-            style: { stroke: '#f0f0f0', lineWidth: 1 }
+            style: { stroke: '#F0F0F3', lineWidth: 1 }
           });
         }
         for (const x of [gl + gw / 3, gl + (2 * gw) / 3]) {
@@ -637,7 +637,7 @@ createApp({
             id: 'gl' + glId++,
             type: 'line', z: 1, silent: true,
             shape: { x1: x, y1: gt, x2: x, y2: gt + gh },
-            style: { stroke: '#f0f0f0', lineWidth: 1 }
+            style: { stroke: '#F0F0F3', lineWidth: 1 }
           });
         }
       }
@@ -694,7 +694,7 @@ createApp({
           {
             name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
             data: bars.map(b => [b.open, b.close, b.low, b.high]),
-            itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
+            itemStyle: { color: '#E64340', color0: '#27AE60', borderColor: '#E64340', borderColor0: '#27AE60' }
           },
           { name: 'K', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_K, data: kdj.map(p => p.k) },
           { name: 'D', type: 'line', xAxisIndex: 1, yAxisIndex: 1, smooth: true, showSymbol: false, color: COLOR_D, data: kdj.map(p => p.d) },
@@ -707,7 +707,7 @@ createApp({
             style: {
               text: kdjTitle,
               rich: {
-                t: { fill: '#303133', fontWeight: 600, fontSize: 13 },
+                t: { fill: '#1D1D1F', fontWeight: 600, fontSize: 13 },
                 k: { fill: COLOR_K, fontWeight: 600, fontSize: 13 },
                 d: { fill: COLOR_D, fontWeight: 600, fontSize: 13 },
                 j: { fill: COLOR_J, fontWeight: 600, fontSize: 13 }
@@ -715,11 +715,11 @@ createApp({
             }
           },
           // 最高 / 最低交汇点：放在 KDJ 图最左（上 / 下），随视野动态更新
-          { id: 'crossHi', type: 'text', left: 0, top: 362, style: { text: '', fill: '#909399', fontSize: 12 } },
-          { id: 'crossLo', type: 'text', left: 0, top: 503, style: { text: '', fill: '#909399', fontSize: 12 } },
+          { id: 'crossHi', type: 'text', left: 0, top: 362, style: { text: '', fill: '#86868B', fontSize: 12 } },
+          { id: 'crossLo', type: 'text', left: 0, top: 503, style: { text: '', fill: '#86868B', fontSize: 12 } },
           // 视野两端日期：放在两图中间的左 / 右两侧，随拖动更新
-          { id: 'dateL', type: 'text', left: 40, top: 298, style: { text: '', fill: '#909399', fontSize: 12 } },
-          { id: 'dateR', type: 'text', right: 40, top: 298, style: { text: '', fill: '#909399', fontSize: 12, align: 'right' } }
+          { id: 'dateL', type: 'text', left: 40, top: 298, style: { text: '', fill: '#86868B', fontSize: 12 } },
+          { id: 'dateR', type: 'text', right: 40, top: 298, style: { text: '', fill: '#86868B', fontSize: 12, align: 'right' } }
         ])
       }, true);
 
@@ -775,19 +775,19 @@ createApp({
         silent: true,
         symbol: ['circle', 'none'],
         symbolSize: 5,
-        lineStyle: { color: '#909399', width: 1 },
+        lineStyle: { color: '#86868B', width: 1 },
         emphasis: { disabled: true }
       };
       const priceLines = [
         [
           { coord: [hiIdx, hi] },
           { coord: [Math.min(hiIdx + seg, ei), hi],
-            label: { show: true, formatter: fmt2(hi), position: 'end', color: '#303133', fontWeight: 600, distance: 4 } }
+            label: { show: true, formatter: fmt2(hi), position: 'end', color: '#1D1D1F', fontWeight: 600, distance: 4 } }
         ],
         [
           { coord: [loIdx, lo] },
           { coord: [Math.max(loIdx - seg, si), lo],
-            label: { show: true, formatter: fmt2(lo), position: 'start', color: '#303133', fontWeight: 600, distance: 4 } }
+            label: { show: true, formatter: fmt2(lo), position: 'start', color: '#1D1D1F', fontWeight: 600, distance: 4 } }
         ]
       ];
 

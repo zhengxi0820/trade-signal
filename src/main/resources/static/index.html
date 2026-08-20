@@ -7,7 +7,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/vendor/index.css">
-<link rel="stylesheet" href="/css/style.css?v=13">
+<link rel="stylesheet" href="/css/style.css?v=19">
 </head>
 <body>
 <div id="app">
@@ -17,7 +17,7 @@
     <div class="auth-card">
       <div class="auth-logo">
         <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
-          <path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8l-6-4.6h7.6z" fill="#3b9eff"/>
+          <path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8l-6-4.6h7.6z" fill="#1d1d1f"/>
         </svg>
       </div>
       <div class="auth-title">交易位信号系统</div>
@@ -48,13 +48,25 @@
     </div>
   </div>
 
+  <!-- 吸顶导航栏（苹果官网式）：品牌居左，页签居右 -->
+  <header class="ts-navbar">
+    <div class="ts-navbar-inner">
+      <div class="ts-brand" @click="switchPage('all')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8l-6-4.6h7.6z" fill="#1d1d1f"/>
+        </svg>
+        <span class="ts-brand-name">交易位信号</span>
+        <span class="ts-brand-sub">TRADE&nbsp;SIGNAL</span>
+      </div>
+      <nav class="ts-nav" aria-label="页面切换">
+        <a :class="{on: page === 'all'}" @click="switchPage('all')">全市场</a>
+        <a :class="{on: page === 'fav'}" @click="switchPage('fav')">我的自选</a>
+      </nav>
+    </div>
+  </header>
+
   <!-- 顶部工具区 -->
   <div class="toolbar">
-    <!-- 页签：全市场 / 我的自选 -->
-    <nav class="nav-underline">
-      <a :class="{on: page === 'all'}" @click="switchPage('all')">全市场</a>
-      <a :class="{on: page === 'fav'}" @click="switchPage('fav')">我的自选</a>
-    </nav>
     <div class="period-btns">
       <el-radio-group v-model="kdjType" size="large">
         <el-radio-button value="0">日线</el-radio-button>
@@ -328,6 +340,6 @@
 <script src="/vendor/index.full.min.js"></script>
 <script src="/vendor/zh-cn.min.js"></script>
 <script src="/vendor/echarts.min.js"></script>
-<script src="/js/app.js"></script>
+<script src="/js/app.js?v=19"></script>
 </body>
 </html>

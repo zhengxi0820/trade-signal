@@ -59,7 +59,8 @@ public class AuthController {
         }
         if (!userService.register(ip, username, password, inviteCode)) {
             authService.noteAuthFail(ip, "duplicate");
-            return badRequest("用户名已存在");
+            // 不回"用户名已存在"，防注册接口枚举已注册用户名（S-08）
+            return badRequest("注册失败，请更换用户名或稍后重试");
         }
         authService.noteRegisterSuccess(ip);
         response.addCookie(authService.buildCookie(authService.issueToken(username)));
@@ -92,11 +93,13 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
-    /** 前端轮转用：已认证 204，未认证 401。 */
+    /** 前端轮转用：已认证 204，未认证 401（与 AuthFilter 同口径：用户 token 含吊销检查）。 */
     @GetMapping("/check")
     public ResponseEntity<Void> check(HttpServletRequest request) {
-        return authService.hasValidCookie(request)
-                ? ResponseEntity.noContent().build()
+        AuthService.ParsedToken token = authService.parse(request);
+        boolean authenticated = token != null && ("key".equals(token.subject())
+                || userService.isTokenActive(token.subject(), token.issuedAt()));
+        return authenticated ? ResponseEntity.noContent().build()
                 : ResponseEntity.status(401).build();
     }
 

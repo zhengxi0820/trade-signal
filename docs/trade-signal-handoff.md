@@ -5,7 +5,7 @@
 
 ## 1. 这是什么
 
-KDJ 交易位信号系统。A 股全市场（5534 只，沪深北）的日/周/月/季 KDJ 实时计算，识别金叉与交易位（买入信号）。线上：`https://zhengxi.online`（腾讯云轻量 43.138.158.123，4C4G）。
+KDJ 交易位信号系统。A 股全市场（沪深北，上市股票数随时间变动：2026-08-05 回填时 5534 只、08-10/11 实测 5535 只）的日/周/月/季 KDJ 实时计算，识别金叉与交易位（买入信号）。线上：`https://zhengxi.online`（腾讯云轻量 43.138.158.123，4C4G）。
 
 技术栈：Spring Boot 4 / Java 17 / MyBatis / MySQL 8（Java 主体，只读库）；python 数据管线（`scripts/`，只写库）。两边通过数据库解耦。
 
@@ -30,7 +30,7 @@ KDJ 交易位信号系统。A 股全市场（5534 只，沪深北）的日/周/�
 
 ## 4. 数据管线（每日 00:00 探针触发 + 3 天闸门，run_daily.sh；每小时物化自愈）
 
-flock 防重叠 → 探针（600519 最新交易日 ≤ 主表水位、或距水位 <3 天则跳过本轮，防新浪封 IP；人工触发用 `FORCE=1 ./run_daily.sh`，仅绕过闸门）→ 新股检测（巨潮名单 vs stock_info，新股全历史双轨回填后登记）→ 2 路并行分片写 `stock_quote_log`（新浪唯一行情源，~6h）→ finalize（除权事件统一 rescale → 并入主表 → 逐行对账 → 备份 → truncate）→ work_day → 物化 → 预热缓存。另有每小时 `ensure_period_bar.sh` 物化自愈（先跑日历种子（每日守卫）+ 对账清理（每小时，与同步与否无关），再按 BEHIND 补物化；与 run_daily 共用锁）。数据新鲜度 = 最近一个已完结交易日。
+flock 防重叠 → 探针（600519 最新交易日 ≤ 主表水位、或距水位 <3 天则跳过本轮，防新浪封 IP；人工触发用 `FORCE=1 ./run_daily.sh`，仅绕过闸门）→ 新股检测（交易所官方名单接口（沪 `stock_info_sh_name_code` / 深 `sz` / 北 `bj`）vs stock_info，新股全历史双轨回填后登记）→ 2 路并行分片写 `stock_quote_log`（新浪唯一行情源，~6h）→ finalize（除权事件统一 rescale → 并入主表 → 逐行对账 → 备份 → truncate）→ work_day → 物化 → 预热缓存。另有每小时 `ensure_period_bar.sh` 物化自愈（先跑日历种子（每日守卫）+ 对账清理（每小时，与同步与否无关），再按 BEHIND 补物化；与 run_daily 共用锁）。数据新鲜度 = 最近一个已完结交易日。
 
 **周期完结与物化口径（2026-08-16 修订，权威在需求 §2.4 与管线文档）**：周/月/季线完结 = 该周期最后一个计划交易日（work_day 日历，含未来预置）≤ 库内最新交易日，且日历覆盖该周期之后（截断兜底）；每股周期内 ≥1 交易日即物化（停牌股不丢 K 线，首/末交易日 = 该股真实首/末交易日）。物化增量窗口起点对齐周期第一天（周→周一/月→1号/季→季首），写入为**窗口内先删后插**（同事务，数据后补不残留旧行）；`--full` 全量重建同样先删该类型全部行再流式插入，脏数据修复用 `./rebuild_period_bar.sh`（持锁防并发）。`work_day` 未来日期由 akshare 日历种子预置（`adjust.workday --seed`），每小时对账清理（`--reconcile`）修正临时休市。
 
@@ -87,4 +87,5 @@ ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-*.jar /opt/trade-signal/a
 | `docs/trade-signal-deployment.md` | 运维（发版/备份/里程碑） |
 | `docs/SECURITY.md` | 安全基线（上线检查单 3.1） |
 | `scripts/README.md` | 管线命令用法 |
-| `docs/prototype/` | UI 原型留档（登录页、自选股导航） |
+| `docs/prototype/` | UI 原型留档（登录页、自选股导航、板块筛选、股票徽标、KDJ 图表同步、登出 UI 等，`ls` 看全量；最新两个 `kdj-chart-sync-prototype.html`、`logout-ui-prototype.html` 尚未 git add） |
+| `docs/security-review-20260819.md` | 安全审查报告（发现清单与修复优先级） |

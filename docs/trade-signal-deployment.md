@@ -52,7 +52,9 @@ nohup /home/ops/scripts/warm_cache.sh > /home/ops/scripts/warm_cache.log 2>&1 &
 - 端口：公网仅 22/80/443（云防火墙 + ufw 双层）；3306/8080/2019 仅 127.0.0.1
 - SSH：仅密钥（ed25519），`PermitRootLogin no`，fail2ban 5 次封 24h
 - 凭据：全部在 `/etc/trade-signal.env`（600），DB 密码与网站密钥均为生产独立随机值，不入仓
-- 登录防爆破：同 IP 失败 5 次锁 15 分钟（429），审计日志 `AUTH login fail ip=...` 带真实 IP
+- 登录防爆破：同 IP 失败 5 次锁 15 分钟（429），审计日志 `AUTH login fail ip=...` 带真实 IP（取 X-Forwarded-For **末值**，首值可伪造）；限流/注册计数 Map 容量上限 1 万 IP，内存恒有界
+- 用户 token 可吊销：禁用/改密执行 `update app_user set STATUS='0', UPDATED_AT=unix_timestamp() where USERNAME='...'` 即全量失效（检查缓存 60s）；token 格式 `subject.issuedAt.expiry.签名`（2026-08-19 起，旧三段 Cookie 全部失效需重登）
+- `POST /kdj/cache/refresh` 仅密钥登录（subject=key）可调，注册用户 403
 - Caddy 安全头：X-Frame-Options / X-Content-Type-Options / Referrer-Policy / HSTS / CSP
 - **CSP 已下发**（2026-08-04 前端拆分为外置 css/js + vendor 本地化后）：`default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img/font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'`。两个 unsafe 是刻意取舍：Vue 全量版运行时编译模板需 eval，Element Plus 大量用内联样式；改动前端构建方式（预编译模板）后可去掉
 - 自动安全更新：unattended-upgrades 已开
@@ -64,6 +66,7 @@ nohup /home/ops/scripts/warm_cache.sh > /home/ops/scripts/warm_cache.log 2>&1 &
 
 ## 已完成里程碑
 
+- 2026-08-19 安全加固发版（报告 `docs/security-review-20260819.md`，S-01~S-08/S-10/S-11 已修复）：邀请码默认改空（未配置=注册关闭，本机开发需显式 export）；clientIp 改取 XFF 末值（防伪造绕过限流）；限流 Map 容量上限 1 万（防内存耗尽）；`/kdj/series` 强制 code 必填 400（防全表聚合重查询）；cache/refresh 仅密钥登录；token 内嵌签发时间 + 用户 token 服务端吊销检查（禁用/改密即失效，60s 缓存）；登录时延拉平防用户名枚举 + 重名文案去枚举 + 畸形哈希容错 + 密码 UTF-8 ≤72 字节；接入 Dependabot；删除根目录遗留 `ifind_ohlcv_sync.py`（自带偏离权威 schema 的 DDL）。**注意：token 格式变更，发版后所有用户需重新登录**
 - 2026-08-12 重启自动预热：systemd `OnFailure=` 方案实测**不随 `Restart=` 触发**（失败后立即重启不激活 OnFailure），改用 cron 看门狗 `ensure_warm.sh`（每 10 分钟比对启动时间戳 vs 标记文件）；kill 演练验证通过：模拟 OOM → 自动重启 → 10 分钟内自动触发预热（日线冷 514s 后全部命中）。另确认 10:35 发版 jar 已含前端 B 版双图（其他参数双开关 + 单卡双图 + 持久化），无需再发版
 - 2026-08-12 OOM 事故与恢复：04:31 应用被 OOM killer 击杀（4C4G 无 swap，Java RSS 1.8G + MySQL 1.4G 顶满 3.6G）→ systemd 重启后两层缓存全冷 → 并发全市场日线扫描在 MySQL 堆叠（同批 200 只查询 9+ 并发、负载 7、登录转圈）。处理：新增 **2GB swap**（`/swapfile` + fstab 持久化）；**扫描结果缓存加单飞**（同 key 并发请求共享一次计算，ScanResultCache.computeIfAbsent + 单飞并发测试）；重启 + 串行预热后恢复（负载 0.13、命中毫秒级）。教训：4C4G 无 swap 是内存刀尖，任何缓存全冷 + 并发访问都会演变成 OOM；单飞是把"冷缓存风暴"从根上拆掉的关键
 - 2026-08-11 同步触发改版：cron 每周六 09:17 → 每日 00:00 + 探针（600519 最新交易日 ≤ 主表水位即跳过；另加 3 天闸门防新浪封 IP）+ 每小时物化自愈（ensure_period_bar.sh，与 run_daily 共用锁）；run_daily.sh 日志 rc 记录修复（原 `$(date)` 后取 `$?` 恒为 0，掩盖真实退出码）

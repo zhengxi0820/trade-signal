@@ -81,8 +81,10 @@ CREATE TABLE IF NOT EXISTS stock_dividend (
     UNIQUE KEY uk_code_exdate (CODE, EX_DATE)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='除权除息事件';
 
--- 注册用户（邀请码注册制，邀请码由环境变量 TRADE_SIGNAL_INVITE_CODES 配置，不落库）
+-- 注册用户（邀请码注册制，邀请码由环境变量 TRADE_SIGNAL_INVITE_CODES 配置，不落库；未配置=注册关闭）
 -- PASSWORD 存 BCrypt 哈希（60 字符），永不存明文；STATUS 是恶意账号禁用开关（非权限体系）
+-- UPDATED_AT 兼作用户 token 吊销水位：禁用/改密时同步 bump（UPDATE ... SET UPDATED_AT=UNIX_TIMESTAMP()），
+--   晚于 token 签发时间的旧 token 即失效（UserService.isTokenActive，检查带 60s 内存缓存）
 -- 唯一索引在 utf8mb4_general_ci 下大小写不敏感：Admin/admin 视为重复（防仿冒）
 CREATE TABLE IF NOT EXISTS app_user (
     ID          BIGINT       NOT NULL AUTO_INCREMENT,

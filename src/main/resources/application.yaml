@@ -18,9 +18,12 @@ trade-signal:
   auth:
     # 访问密钥，生产必须显式设置；留空则启动时生成随机密钥打印到日志（本机开发模式）
     access-key: ${TRADE_SIGNAL_ACCESS_KEY:}
-    # 注册邀请码（逗号分隔多个，泄露可轮换；空=注册关闭）。默认值仅本机开发，生产必须显式设置
-    invite-codes: ${TRADE_SIGNAL_INVITE_CODES:dev-local-only}
+    # 注册邀请码（逗号分隔多个，泄露可轮换）。留空=注册关闭（403，安全默认）；
+    # 本机开发要测注册时显式 export，如 TRADE_SIGNAL_INVITE_CODES=dev-local-only
+    invite-codes: ${TRADE_SIGNAL_INVITE_CODES:}
     # Cookie Secure 属性：HTTPS 下必须 true（默认），仅本机 HTTP 调试可关
     secure-cookie: ${TRADE_SIGNAL_SECURE_COOKIE:true}
     # 会话时长（小时），默认 168 = 7 天
     session-hours: ${TRADE_SIGNAL_SESSION_HOURS:168}
+    # 用户 token 吊销检查（禁用/改密）结果缓存秒数，0=不缓存每次查库
+    user-token-cache-seconds: ${TRADE_SIGNAL_USER_TOKEN_CACHE_SECONDS:60}

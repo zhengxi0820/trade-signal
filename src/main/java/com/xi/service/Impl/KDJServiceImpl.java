@@ -140,6 +140,10 @@ public class KDJServiceImpl implements KDJService {
 
     @Override
     public List<KDJDTO> getAllKDJ(KDJParam kdjParam) {
+        // series 端点 code 必填：缺省会全表读取聚合成无意义序列（重查询压 DB，S-04）
+        if (kdjParam == null || !StringUtils.hasText(kdjParam.getCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "code 必填（series 为单票序列端点）");
+        }
         fillCommonDefaults(kdjParam);
         List<KDJHandler.PeriodBar> bars = loadPeriodBars(kdjParam, loadDailies(kdjParam));
         List<KDJHandler.KdjValue> kdjList = kdjHandler.calculate(bars, kdjParam.getN(), kdjParam.getM1(), kdjParam.getM2());

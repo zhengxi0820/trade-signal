@@ -4,11 +4,12 @@
 
 ## 通用说明
 
-- **认证**：`/kdj/**` 全部需要认证 Cookie，未认证返回 401。Cookie 为无状态 HMAC token（`subject.expiry.签名`，subject=用户名或 "key"），HttpOnly + SameSite=Strict，默认 7 天。`GET /auth/check` 查状态（204/401）；`POST /auth/logout` 登出。同一 IP 连续失败 5 次锁定 15 分钟（429）。
-  - **用户登录**：`POST /auth/login` body `{"username":"...","password":"..."}` → 204 + Cookie；401=用户名或密码错误（含账号被禁用）
+- **认证**：`/kdj/**` 与 `/watchlist` 全部需要认证 Cookie，未认证返回 401（body `{"error":"unauthorized"}`）。Cookie 名 `TS_AUTH`，为无状态 HMAC token（`subject.issuedAt.expiry.签名`，subject=用户名或 "key"），HttpOnly + Secure（默认）+ SameSite=Strict，默认 7 天。**用户 token 服务端吊销检查**：用户被禁用（STATUS）或 `UPDATED_AT` 晚于 token 签发时间即失效（检查结果带 60s 内存缓存，配置 `TRADE_SIGNAL_USER_TOKEN_CACHE_SECONDS`）；密钥 token（subject="key"）纯无状态不查库。`GET /auth/check` 查状态（204/401，含吊销检查）；`POST /auth/logout` 登出（仅清 Cookie，token 本身到过期或被吊销前仍有效）。同一 IP 连续失败 5 次锁定 15 分钟（429，限流与审计取 X-Forwarded-For **最后一个**值，首值可伪造不可信）。
+  - **用户登录**：`POST /auth/login` body `{"username":"...","password":"..."}` → 204 + Cookie；401=用户名或密码错误（含账号被禁用），body `{"message":"...还可尝试 N 次"}`
   - **密钥登录**（服务器脚本用）：`POST /auth/login` body `{"key":"访问密钥"}`，密钥由 `TRADE_SIGNAL_ACCESS_KEY` 配置
-  - **注册**：`POST /auth/register` body `{"username":"...","password":"...","inviteCode":"..."}` → 204 + Cookie（自动登录）；400 带 `{"message":"具体原因"}`（邀请码无效/用户名已存在/参数非法）；403=注册未开放（未配置邀请码）；429=限流（同 IP 失败 5 次锁 15 分钟，或同 IP 当日成功注册超 5 个）。用户名规则 `^[a-zA-Z0-9_]{3,20}$`，密码 8-64 位，用户名大小写不敏感唯一；密码只存 BCrypt 哈希。邀请码由 `TRADE_SIGNAL_INVITE_CODES` 配置（逗号分隔多个，泄露可轮换）
-- 业务接口均为 GET，参数以 query string 传递。
+  - **注册**：`POST /auth/register` body `{"username":"...","password":"...","inviteCode":"..."}` → 204 + Cookie（自动登录）；400 带 `{"message":"具体原因"}`（邀请码无效/参数非法/注册失败——重名不单独提示，防用户名枚举）；403=注册未开放（邀请码未配置或显式置空）；429=限流（同 IP 失败 5 次锁 15 分钟，或同 IP 当日成功注册超 5 个）。用户名规则 `^[a-zA-Z0-9_]{3,20}$`，密码 8-64 位且 UTF-8 编码 ≤72 字节，用户名大小写不敏感唯一；密码只存 BCrypt 哈希。邀请码由 `TRADE_SIGNAL_INVITE_CODES` 配置（逗号分隔多个，泄露可轮换）；未设置时注册关闭，本机开发要开注册需显式设置（如 `dev-local-only`）
+- KDJ 业务查询为 GET（query string 传参）；写操作（login/register/logout、/watchlist 增删、cache/refresh）为 POST（JSON body）。
+- **入参校验（不合法一律 400）**：adjust ∈ {"0","1","2"}、kdjType ∈ {"0","1","2","3"}、开关参数 ∈ {"1","0"}、code `^[0-9A-Za-z]{1,12}$`、market `^[0-9A-Za-z]{1,10}$`、日期 `^\d{6}(\d{2})?$`、n/m1/m2 必须为正数。
 - 所有数值入参/出参均为 BigDecimal（JSON 中为数字）。
 - 开关类参数为字符串："1" = 启用，"0" = 禁用。
 - 日期字段规则（入参与出参一致）：
@@ -33,16 +34,16 @@
 | `GET /kdj/trade-signal` | 某周期截止周期出现交易位（买入信号）的股票列表 |
 | `GET /kdj/all-stocks` | 全部股票的截止周期行情与 KDJ（不过滤），供「所有股票」列表 |
 | `GET /kdj/periods` | 可选周期列表（已完结周期），供截止周期选择器 |
-| `POST /kdj/cache/refresh` | 清空全市场扫描结果缓存（运维兜底；日常失效靠数据水位自动完成） |
-| `GET /watchlist` | 我的自选股代码列表（按认证 token 的用户名隔离） |
-| `POST /watchlist` / `POST /watchlist/remove` | 加入 / 移出自选，body `{"code":"600519"}`，重复加入幂等 204 |
+| `POST /kdj/cache/refresh` | 清空全市场扫描的两层缓存（结果层 + bars 层，运维兜底；日常失效靠数据水位自动完成） |
+| `GET /watchlist` | 我的自选股代码列表（按认证 token 的用户名隔离，按加入时间升序） |
+| `POST /watchlist` / `POST /watchlist/remove` | 加入 / 移出自选，body `{"code":"600519"}`；code 需匹配 `^[0-9A-Za-z]{1,12}$`（否则 400），重复加入幂等 204 |
 
 ## 入参（KDJParam，series / gold-cross / trade-signal / all-stocks 四个接口共用）
 
 | 参数 | 类型 | 必填 | 默认值 | 含义 |
 |---|---|---|---|---|
-| code | String | series 必填；其余选填 | 空 = 全市场 | 股票代码 |
-| market | String | 否 | — | 市场标识 |
+| code | String | series 必填（缺省 400）；其余选填 | 空 = 全市场 | 股票代码 |
+| market | String | 否 | — | 市场标识。**仅 `/kdj/periods` 生效**；在 series / gold-cross / trade-signal / all-stocks 四个接口当前不参与任何查询与缓存 key（传与不传结果相同，仅做格式校验） |
 | adjust | String | 否 | "1" | 复权类型："0"=无复权、"1"=前复权、"2"=后复权（预留，以 stock_quote 数据为准） |
 | kdjType | String | 否 | "0" | 周期类型："0"=日、"1"=周、"2"=月、"3"=季 |
 | tradeDate | String | 否 | 最新已完结周期 | 截止周期（日度、月度使用） |
@@ -155,12 +156,12 @@ GET /kdj/periods?kdjType=1&market=SH
 
 ## POST /kdj/cache/refresh
 
-清空三个全市场扫描接口（gold-cross / trade-signal / all-stocks）的结果缓存，返回 `{"cleared": N}`。
+清空全市场扫描的**两层缓存**——三个扫描接口（gold-cross / trade-signal / all-stocks）的结果缓存 + 每股每周期的 132 根窗口 bars 缓存，返回 `{"cleared": N}`（两层清掉条数之和）。**仅密钥登录（subject="key"）可调用**，注册用户调用返回 403。
 
 运维兜底用，日常不需要调：缓存按「接口 + 全部生效参数」为 key，并以 `stock_quote` 的 `max(trade_date)` 为数据水位——新行情入库后水位变化，缓存自动整表失效，下一请求重算。
 
 ## 备注
 
-- 全市场扫描（周/月/季，kdjType=1/2/3）在物化表落后于请求截止周期时，响应带 `X-Data-Not-Ready: 1` 响应头（物化自愈中，前端提示"数据未就绪，稍后刷新"；数据内容此时为上一周期结果）。日线恒就绪不带。
+- 周期物化表落后于请求截止周期时，gold-cross / trade-signal / all-stocks 三个端点的响应带 `X-Data-Not-Ready: 1` 响应头（物化自愈中，前端提示"数据未就绪，稍后刷新"；数据内容此时为上一周期结果）。**不区分是否全市场请求——指定单票 code 的周/月/季请求同样可能带此头**。日线（kdjType=0）恒就绪不带。
 - 全市场扫描（code 为空）走两层内存缓存：结果层（接口+全部参数为 key，命中毫秒级；**同 key 并发未命中单飞共享一次计算**，防冷缓存并发风暴）+ bars 层（每股票每周期 132 根窗口 K 线，key 不含 n/m1/m2）。取数：周/月/季线读周期物化表 `stock_period_bar`（scripts 物化，未启用时月/季退回现场聚合、周线退回批量原始行聚合），日线批量窗口读原始行；全市场扫描按 200 只/批装载。因此：调阈值/间距/开关等过滤参数毫秒级；调 n/m1/m2 只重递推不取数（秒级）；调 adjust 或回看超出窗口的截止周期才触发重载。新行情入库后按 `max(trade_date)` 水位自动失效。信号判定均与全历史计算一致（H2 对拍保证）；单票 `/kdj/series` 不受影响，始终全历史实时计算。
 - `currGoldCrossMax` 传 0 就是字面 0（等于过滤掉几乎所有信号），无特殊语义；想"不限"，series / gold-cross / all-stocks 不传即可，trade-signal 传一个足够大的值。

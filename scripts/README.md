@@ -19,7 +19,8 @@ DB_USER=trade_signal DB_PASSWORD=<本机 dev 库密码> python -m fetch.stock_li
 
 ## 用法
 
-均在 `scripts/` 目录下、用 `.venv/Scripts/python.exe` 执行：
+均在 `scripts/` 目录下执行；python 路径本机（Windows）为 `.venv/Scripts/python.exe`，
+服务器（Linux）为 `.venv/bin/python`，下文示例两种写法混排，按所在环境取对应的一种：
 
 ```bash
 # M2：灌 stock_info（全量 A 股，沪/深/北三所名单）
@@ -71,6 +72,8 @@ python tests/test_period_bar.py
 # → aggregate.period_bar → warm_cache 预热，日志 daily.log；人工强制触发：FORCE=1 ./run_daily.sh（仅绕过三日闸门，非常规）
 # 另有每小时 ensure_period_bar.sh 物化自愈（日历种子+对账清理+BEHIND 补物化，与 run_daily 共用锁）、
 # 每 10 分钟 ensure_warm.sh 重启自动预热（应用重启后自动触发 warm_cache，防并发用 .warm.lock）；
+# 注意：warm_cache.sh / ensure_warm.sh 是部署侧脚本，只在服务器 /home/ops/scripts/，不入仓库
+# （run_daily.sh 以绝对路径调用），本地复跑 run_daily.sh 时预热步骤会失败，属预期；
 # 东财行情口已退出生产（限流实录），公告日历保留
 ```
 
@@ -89,5 +92,6 @@ rebuild_period_bar.sh 物化表全量重建（持锁）
 pilot.py 试点编排入口
 verify_fix.py 事件判定只读验证（纯反推回归 + 万科双轨）
 full_backfill.py 全量历史回填（断点续跑 + 事件数保险）
-cdp_probe.py 前端无头调试探针（CDP 收集 console/异常/网络请求，排障用）
+cdp_probe.py 前端无头调试探针（CDP 收集 console/异常/网络请求，排障用；
+             额外依赖 websocket-client：`pip install websocket-client`，不在 requirements.txt）
 ```

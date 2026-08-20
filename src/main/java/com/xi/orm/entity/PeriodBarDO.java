@@ -5,8 +5,8 @@ import lombok.Data;
 import java.math.BigDecimal;
 
 /**
- * 周期K线物化（stock_period_bar，scripts 周频物化；月/季，周线预留）。
- * 全市场扫描的月/季线从本表读取，不再现场聚合 stock_quote。
+ * 周期K线物化（stock_period_bar，scripts 周/月/季三类型均已生产物化）。
+ * 全市场扫描的周/月/季线从本表读取，不再现场聚合 stock_quote。
  */
 @Data
 public class PeriodBarDO {
@@ -17,7 +17,7 @@ public class PeriodBarDO {
     private Long id;
 
     /**
-     * 周期类型：1=周(预留) 2=月 3=季
+     * 周期类型：1=周 2=月 3=季
      */
     private String periodType;
 

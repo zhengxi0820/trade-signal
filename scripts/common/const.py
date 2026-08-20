@@ -53,7 +53,7 @@ QUANTUM_NOISE_FACTOR = 1.5
 PERSIST_WINDOW = 5
 PERSIST_RATIO = 0.5
 
-# 自算 qfq 与爬取 qfq 对拍的逐日容差：max(VERIFY_TOLERANCE, ADAPTIVE_VERIFY_TICKS 个价位 ÷ qfq价)。
+# 自算 qfq 与爬取 qfq 对拍的逐日容差：max(VERIFY_TOLERANCE, ADAPTIVE_VERIFY_TICKS 个价位 ÷ min(raw, qfq)价)。
 # 早期 qfq 低价段的"偏差"本质是爬取 qfq 自身的两位小数舍入抖动（自算值是段中位数
 # 去噪后的平滑序列，反而更接近真值），绝对容差在该段无意义，故按价位数自适应。
 VERIFY_TOLERANCE = 0.001

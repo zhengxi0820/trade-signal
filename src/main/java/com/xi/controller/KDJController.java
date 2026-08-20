@@ -1,5 +1,6 @@
 package com.xi.controller;
 
+import com.xi.auth.AuthService;
 import com.xi.convert.KDJConvert;
 import com.xi.model.dto.KDJDTO;
 import com.xi.model.param.KDJParam;
@@ -8,12 +9,15 @@ import com.xi.model.vo.CrossStockVO;
 import com.xi.model.vo.KDJVO;
 import com.xi.model.vo.WorkDayVO;
 import com.xi.service.KDJService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -24,6 +28,9 @@ public class KDJController {
 
     @Autowired
     private KDJService kdjService;
+
+    @Autowired
+    private AuthService authService;
 
     /**
      * 单票某周期KDJ序列（含交叉点标注），供KDJ线图展示
@@ -80,10 +87,15 @@ public class KDJController {
     }
 
     /**
-     * 清空全市场扫描结果缓存（运维兜底；日常失效靠数据水位自动完成）
+     * 清空全市场扫描的两层缓存（运维兜底；日常失效靠数据水位自动完成）。
+     * 仅密钥登录（subject="key"，脚本/运维入口）可调，注册用户 403——防反复清缓存触发全市场重算（S-05）。
      */
     @PostMapping("/cache/refresh")
-    public Map<String, Integer> refreshCache() {
+    public Map<String, Integer> refreshCache(HttpServletRequest request) {
+        String subject = authService.subjectOf(request);
+        if (!"key".equals(subject)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅密钥登录可调用");
+        }
         return Map.of("cleared", kdjService.clearScanCache());
     }
 }

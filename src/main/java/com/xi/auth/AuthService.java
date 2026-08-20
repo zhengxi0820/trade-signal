@@ -22,7 +22,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * 安全口径见 docs/SECURITY.md 2.1/2.2：
  * - 密钥只走环境变量 TRADE_SIGNAL_ACCESS_KEY，不设代码默认值；
  *   未配置时生成随机密钥并打印日志（本机开发模式），永远不存在"已知默认值"。
- * - 同一 IP 连续失败 5 次锁定 15 分钟；审计日志带真实客户端 IP（反代后取 X-Forwarded-For）。
+ * - 同一 IP 连续失败 5 次锁定 15 分钟；审计日志带真实客户端 IP。
+ *   反代后取 X-Forwarded-For 的**最后一个**值——Caddy 等追加式反代把真实客户端
+ *   IP 追加在末尾，首值可被客户端伪造（绕过限流 + 撑爆内存，S-02）。
+ * - 限流/注册计数 Map 设容量上限：溢出时先清非锁定/非当日条目，仍满则整表清空
+ *   （攻击下丢锁换内存有界，S-03）。
  */
 @Component
 public class AuthService {
@@ -33,6 +37,8 @@ public class AuthService {
     private static final String HMAC_ALGO = "HmacSHA256";
     private static final int MAX_FAILS = 5;
     private static final long LOCK_MILLIS = 15 * 60 * 1000L;
+    /** 限流/注册计数的最大追踪 IP 数（防伪造/分布式请求把 Map 撑爆） */
+    static final int MAX_TRACKED_IPS = 10_000;
 
     private final String accessKey;
     private final boolean secureCookie;
@@ -84,6 +90,7 @@ public class AuthService {
             log.info("AUTH login success ip={}", ip);
             return true;
         }
+        evictFailMapIfOverflow();
         long[] rec = failMap.computeIfAbsent(ip, k -> new long[2]);
         rec[0]++;
         if (rec[0] >= MAX_FAILS) {
@@ -106,6 +113,7 @@ public class AuthService {
 
     /** 认证相关失败计数（登录失败/注册失败），与登录共用 5 次锁 15 分钟口径。 */
     public void noteAuthFail(String ip, String reason) {
+        evictFailMapIfOverflow();
         long[] rec = failMap.computeIfAbsent(ip, k -> new long[2]);
         rec[0]++;
         if (rec[0] >= MAX_FAILS) {
@@ -126,6 +134,14 @@ public class AuthService {
 
     public void noteRegisterSuccess(String ip) {
         long todayStart = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.DAYS).getEpochSecond();
+        if (registerSuccessMap.size() >= MAX_TRACKED_IPS) {
+            // 溢出先清非当日条目，仍满则整表清空（保内存有界）
+            registerSuccessMap.entrySet().removeIf(e -> e.getValue()[1] != todayStart);
+            if (registerSuccessMap.size() >= MAX_TRACKED_IPS) {
+                registerSuccessMap.clear();
+                log.warn("AUTH register counter overflow ({}), cleared", MAX_TRACKED_IPS);
+            }
+        }
         long[] rec = registerSuccessMap.computeIfAbsent(ip, k -> new long[]{0, todayStart});
         if (rec[1] != todayStart) {
             rec[0] = 0;
@@ -134,21 +150,37 @@ public class AuthService {
         rec[0]++;
     }
 
+    /** 失败计数 Map 溢出处理：先清"未处于锁定期"的条目，仍满则整表清空（攻击下丢锁换内存有界）。 */
+    private void evictFailMapIfOverflow() {
+        if (failMap.size() < MAX_TRACKED_IPS) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        failMap.entrySet().removeIf(e -> e.getValue()[1] <= now);
+        if (failMap.size() >= MAX_TRACKED_IPS) {
+            failMap.clear();
+            log.warn("AUTH fail counter overflow ({}), cleared", MAX_TRACKED_IPS);
+        }
+    }
+
     // ---- token 签发与校验 ----
 
-    /** token = subject + "." + expiryEpochSeconds + "." + HmacSHA256(subject + "." + expiry)。
-     *  subject：密钥登录固定 "key"，用户登录为用户名（白名单字符集，无点号，分隔安全）。 */
+    /** token = subject + "." + issuedAt + "." + expiry + "." + HmacSHA256(subject.issuedAt.expiry)。
+     *  subject：密钥登录固定 "key"，用户登录为用户名（白名单字符集，无点号，分隔安全）。
+     *  issuedAt 用于服务端吊销检查（禁用/改密后旧 token 失效，见 UserService.isTokenActive）。 */
     public String issueToken(String subject) {
-        String expiry = String.valueOf(Instant.now().getEpochSecond() + sessionSeconds);
-        return subject + "." + expiry + "." + hmacHex(subject + "." + expiry);
+        long now = Instant.now().getEpochSecond();
+        String issuedAt = String.valueOf(now);
+        String expiry = String.valueOf(now + sessionSeconds);
+        return subject + "." + issuedAt + "." + expiry + "." + hmacHex(subject + "." + issuedAt + "." + expiry);
     }
 
     public boolean isValidToken(String token) {
-        return subjectOf(token) != null;
+        return parseToken(token) != null;
     }
 
-    /** 校验并解析 subject；不合法/过期/签名不符返回 null。 */
-    public String subjectOf(String token) {
+    /** 校验签名/过期并解析；不合法/过期/签名不符/旧三段格式返回 null。 */
+    public ParsedToken parseToken(String token) {
         if (token == null) {
             return null;
         }
@@ -158,36 +190,55 @@ public class AuthService {
             return null;
         }
         String subject = token.substring(0, first);
-        String expiry = token.substring(first + 1, last);
+        String mid = token.substring(first + 1, last);   // issuedAt.expiry
+        int dot = mid.indexOf('.');
+        if (dot <= 0 || dot == mid.length() - 1) {
+            return null;                                  // 旧三段格式（无 issuedAt）整体失效
+        }
+        long issuedAt;
+        long expiry;
         try {
-            if (Long.parseLong(expiry) < Instant.now().getEpochSecond()) {
-                return null;
-            }
+            issuedAt = Long.parseLong(mid.substring(0, dot));
+            expiry = Long.parseLong(mid.substring(dot + 1));
         } catch (NumberFormatException e) {
             return null;
         }
-        String expect = hmacHex(subject + "." + expiry);
+        if (expiry < Instant.now().getEpochSecond()) {
+            return null;
+        }
+        String expect = hmacHex(subject + "." + mid);
         if (!MessageDigest.isEqual(expect.getBytes(StandardCharsets.UTF_8),
                 token.substring(last + 1).getBytes(StandardCharsets.UTF_8))) {
             return null;
         }
-        return subject;
+        return new ParsedToken(subject, issuedAt, expiry);
     }
 
-    /** 从请求里取认证 Cookie 并校验。 */
-    public boolean hasValidCookie(HttpServletRequest request) {
-        return subjectOf(request) != null;
+    /** 已签名未过期 token 的解析结果（subject + 签发/过期时间，epoch 秒）。 */
+    public record ParsedToken(String subject, long issuedAt, long expiry) {
     }
 
-    /** 从请求 Cookie 解析认证主体（用户名或 "key"）；未认证返回 null。 */
+    /** 兼容入口：只取 subject（签名与过期校验同 parseToken）。 */
+    public String subjectOf(String token) {
+        ParsedToken parsed = parseToken(token);
+        return parsed == null ? null : parsed.subject();
+    }
+
+    /** 从请求 Cookie 解析认证主体（用户名或 "key"）；未认证返回 null。不含服务端吊销检查。 */
     public String subjectOf(HttpServletRequest request) {
+        ParsedToken parsed = parse(request);
+        return parsed == null ? null : parsed.subject();
+    }
+
+    /** 从请求 Cookie 解析已签名未过期的 token；无/非法返回 null。不含服务端吊销检查。 */
+    public ParsedToken parse(HttpServletRequest request) {
         Cookie[] cookies = request.getCookies();
         if (cookies == null) {
             return null;
         }
         for (Cookie c : cookies) {
             if (COOKIE_NAME.equals(c.getName())) {
-                return subjectOf(c.getValue());
+                return parseToken(c.getValue());
             }
         }
         return null;
@@ -215,11 +266,13 @@ public class AuthService {
         return cookie;
     }
 
-    /** 真实客户端 IP：反代后取 X-Forwarded-For 第一个值。 */
+    /** 真实客户端 IP：反代后取 X-Forwarded-For 的**最后一个**值（Caddy 等追加式反代把真实
+     *  客户端 IP 追加在末尾；首值可被客户端伪造，不能用于限流与审计）。 */
     public String clientIp(HttpServletRequest request) {
         String xff = request.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
+            String[] parts = xff.split(",");
+            return parts[parts.length - 1].trim();
         }
         return request.getRemoteAddr();
     }

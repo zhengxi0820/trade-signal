@@ -44,7 +44,7 @@ KDJ 交易位信号系统（Spring Boot 4 / Java 17 / MyBatis / MySQL）。基�
 ## 安全
 
 - 凭据只走环境变量（Java 侧 `TRADE_SIGNAL_DB_USER/PASSWORD`、`TRADE_SIGNAL_ACCESS_KEY`，scripts 侧 `DB_*` 且 `DB_PASSWORD` 无代码默认值），明文不进仓；yaml 里的缺省值仅是本机 dev 库。
-- **认证在 `auth/` 包**：邀请码注册制用户体系（`app_user` 表，密码 BCrypt 哈希）+ 密钥登录并存；HMAC token 带 subject（用户名或 "key"），无服务端会话；`/kdj/**` 由 AuthFilter 拦截 401，同 IP 失败 5 次锁 15 分钟（登录/注册共用），注册另有同 IP 每日 5 个上限。邀请码走 `TRADE_SIGNAL_INVITE_CODES`（逗号分隔多码可轮换，空=注册关闭）；`TRADE_SIGNAL_ACCESS_KEY` 未配置时启动生成随机密钥打日志（本机开发模式），生产必须显式设置。
+- **认证在 `auth/` 包**：邀请码注册制用户体系（`app_user` 表，密码 BCrypt 哈希）+ 密钥登录并存；HMAC token 带 subject（用户名或 "key"）与签发时间——用户 token 服务端校验禁用/改密吊销（`UPDATED_AT` 水位，60s 缓存，配置 `TRADE_SIGNAL_USER_TOKEN_CACHE_SECONDS`），key token 纯无状态；`/kdj/**` 与 `/watchlist` 由 AuthFilter 拦截 401，同 IP 失败 5 次锁 15 分钟（登录/注册共用，真实 IP 取 X-Forwarded-For 末值），注册另有同 IP 每日 5 个上限。邀请码走 `TRADE_SIGNAL_INVITE_CODES`（逗号分隔多码可轮换，未配置=注册关闭）；`TRADE_SIGNAL_ACCESS_KEY` 未配置时启动生成随机密钥打日志（本机开发模式），生产必须显式设置。`POST /kdj/cache/refresh` 仅密钥登录可调（注册用户 403）。
 - 入参白名单校验在 `KDJServiceImpl.validateParam`，新增枚举/开关参数要同步加。
 - **上公网事项已落实**（2026-08-04，详见 `docs/trade-signal-deployment.md` 与 `docs/SECURITY.md` 3.1）：HTTPS+安全头+CSP（前端已拆外置 css/js + vendor 本地化；CSP 含 `unsafe-eval`/`unsafe-inline` 两个刻意取舍，预编译模板后可去掉）、生产凭据全部独立随机值。
 

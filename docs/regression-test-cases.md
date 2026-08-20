@@ -84,3 +84,20 @@
 | R-20260815-15 | 全量重建对账 | 服务器新脚本 | `--full` 重建 | 全表与 stock_quote 聚合一致；无重复行 | 02:09 重建完成 rc=0（7404s）；周 7,097,114 / 月 1,684,600 / 季 566,372 行；唯一键重复=0 | 通过 |
 | R-20260815-16 | 上工申贝回归 | 重建完成 + 清缓存 | 最新周金叉/交易位扫描 | 600843 不在列表；其 K/D 与序列接口一致 | 金叉 412 只、交易位 8 只，均不含 600843；其 K/D 金叉回到 08-03 周 | 通过 |
 | R-20260815-17 | 全表一致性 | 重建完成 | 重复行计数 + 单日异常行计数 + 样例对拍 | 重复=0；07-20 周单日行=0（新股 920238 首周单日为合法）；样例与序列一致 | 重复=0；600843/300237/300176 07-20 周均为完整周；920238 单日行为合法新股数据 | 通过 |
+
+## 2026-08-19 补充用例（安全加固：限流/XFF/token 吊销/参数与权限收口）
+
+改动：安全审查报告 `docs/security-review-20260819.md` S-01~S-08、S-10、S-11 落地——邀请码默认改空（未配置=注册关闭）；clientIp 取 XFF 末值；限流 Map 1 万 IP 上限 + 溢出清理；`/kdj/series` code 必填 400；`POST /kdj/cache/refresh` 仅密钥登录；token 四段格式（含签发时间）+ 用户 token 服务端吊销检查（`UPDATED_AT` 水位，60s 缓存）；登录 dummy BCrypt 拉平时延 + 畸形哈希容错 + 密码 UTF-8 ≤72 字节；注册失败文案去用户名枚举；Dependabot 接入。测试类：`UserServiceTest`（扩充）、`AuthHardeningTest`（新增）、`KDJSeriesCodeRequiredTest`（新增）。
+
+| 编号 | 用例 | 前置 | 步骤 | 预期 | 实测 | 状态 |
+|---|---|---|---|---|---|---|
+| R-20260819-01 | 邀请码未配置=注册关闭 | 不设 `TRADE_SIGNAL_INVITE_CODES` | `new UserService("",0).registerEnabled()`；POST /auth/register | registerEnabled=false；register 403 | UserServiceTest.inviteCodeAndParamValidation 通过（H2） | 通过 |
+| R-20260819-02 | XFF 取末值防伪造绕过 | 构造 `X-Forwarded-For: 1.2.3.4, 5.6.7.8`（首值为伪造） | `clientIp(request)` | 返回 5.6.7.8（末值=反代追加的真实 IP）；无 XFF 回退 remoteAddr | UserServiceTest.clientIpTakesLastXffValue 通过 | 通过 |
+| R-20260819-03 | 限流 Map 溢出有界 | 锁定 1.2.3.4 后以 10500 个不同 IP 各失败 1 次 | 观察内部 failMap | size ≤ 10000；1.2.3.4 锁定保留（清非锁定条目优先） | UserServiceTest.failMapCapEvictsUnderFlood 通过 | 通过 |
+| R-20260819-04 | series 缺 code 400 | H2 空库 | `getAllKDJ` code 空 / 空白 / null | ResponseStatusException 400；带合法 code 正常返回（空序列） | KDJSeriesCodeRequiredTest 2 项通过 | 通过 |
+| R-20260819-05 | cache/refresh 权限 | H2 + MockMvc | 无 Cookie / key Cookie / 注册用户 Cookie 各 POST 一次 | 依次 401 / 200（{"cleared":0}）/ 403 | AuthHardeningTest.cacheRefreshRequiresKeySubject 通过 | 通过 |
+| R-20260819-06 | token 四段格式与旧格式失效 | `new AuthService(...)` 直接构造 | issueToken→parseToken：subject/issuedAt 回读；旧三段串/篡改/负会话时长 | 新格式解析正确；旧三段与过期 token 一律 null | UserServiceTest.tokenIssuedAtAndExpiry / tokenSubjectRoundTrip 通过 | 通过 |
+| R-20260819-07 | 禁用/水位 bump 吊销 token | 注册用户 + user-token-cache-seconds=0 | /auth/check 204 → SQL 置 STATUS=0 并 bump UPDATED_AT(+100s) → check、/kdj/gold-cross → 恢复 STATUS=1 再 check | 204 → 401/401 → 仍 401（签发早于水位，须重登） | AuthHardeningTest.authCheckEnforcesRevocation 通过 | 通过 |
+| R-20260819-08 | 注册→自动登录全链路 | invite-codes=test-invite | POST /auth/register → 带 Cookie GET /auth/check | 204 + TS_AUTH Cookie；check 204（注册即清吊销负缓存） | AuthHardeningTest.registerUserViaEndpoint 通过 | 通过 |
+| R-20260819-09 | 登录防枚举与容错 | H2 用户 + 畸形哈希行 | 用户不存在登录；PASSWORD 置为非 BCrypt 串后登录 | 均返回失败不抛异常（dummy BCrypt 拉平时延；畸形哈希按失败） | UserServiceTest.registerAndLogin / malformedHashFailsLoginNot500 通过 | 通过 |
+| R-20260819-10 | 密码 72 字节上限 | validateParam | 30 个中文（90 字节）作密码 | 拒绝；20 个中文（60 字节）合法 | UserServiceTest.inviteCodeAndParamValidation 通过 | 通过 |

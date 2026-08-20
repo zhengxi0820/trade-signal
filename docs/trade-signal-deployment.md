@@ -66,6 +66,7 @@ nohup /home/ops/scripts/warm_cache.sh > /home/ops/scripts/warm_cache.log 2>&1 &
 
 ## 已完成里程碑
 
+- 2026-08-20 前端苹果风整页改造发版（v19，commit 2780cc0，apple-design-skill 规范落地）：毛玻璃吸顶导航栏 + 黑色胶囊页签、#F5F5F7 画布 + 18px 圆角白卡、透明表头表格、登录页纯白卡片重做、分段控件无底轨蓝底白字（间距 12px）、图表配色 K=#EA7A38/D=#8A51C3/J=#4CA2F7、蜡烛红涨 #E64340 绿跌 #27AE60；Element Plus 主题 CSS 变量桥接 #0066CC；系统字体栈不引外链（CSP 兼容）；纯静态资源无业务逻辑改动。发版验证：公网 200/v19/CSP 头完整/密钥登录 204/series 200/登录页样式完整渲染（R-20260820-05 通过；图表配色 R-04 线上目视）。回滚：`app.jar.bak-20260820`
 - 2026-08-19 安全加固发版（报告 `docs/security-review-20260819.md`，S-01~S-08/S-10/S-11 已修复）：邀请码默认改空（未配置=注册关闭，本机开发需显式 export）；clientIp 改取 XFF 末值（防伪造绕过限流）；限流 Map 容量上限 1 万（防内存耗尽）；`/kdj/series` 强制 code 必填 400（防全表聚合重查询）；cache/refresh 仅密钥登录；token 内嵌签发时间 + 用户 token 服务端吊销检查（禁用/改密即失效，60s 缓存）；登录时延拉平防用户名枚举 + 重名文案去枚举 + 畸形哈希容错 + 密码 UTF-8 ≤72 字节；接入 Dependabot；删除根目录遗留 `ifind_ohlcv_sync.py`（自带偏离权威 schema 的 DDL）。**注意：token 格式变更，发版后所有用户需重新登录**
 - 2026-08-12 重启自动预热：systemd `OnFailure=` 方案实测**不随 `Restart=` 触发**（失败后立即重启不激活 OnFailure），改用 cron 看门狗 `ensure_warm.sh`（每 10 分钟比对启动时间戳 vs 标记文件）；kill 演练验证通过：模拟 OOM → 自动重启 → 10 分钟内自动触发预热（日线冷 514s 后全部命中）。另确认 10:35 发版 jar 已含前端 B 版双图（其他参数双开关 + 单卡双图 + 持久化），无需再发版
 - 2026-08-12 OOM 事故与恢复：04:31 应用被 OOM killer 击杀（4C4G 无 swap，Java RSS 1.8G + MySQL 1.4G 顶满 3.6G）→ systemd 重启后两层缓存全冷 → 并发全市场日线扫描在 MySQL 堆叠（同批 200 只查询 9+ 并发、负载 7、登录转圈）。处理：新增 **2GB swap**（`/swapfile` + fstab 持久化）；**扫描结果缓存加单飞**（同 key 并发请求共享一次计算，ScanResultCache.computeIfAbsent + 单飞并发测试）；重启 + 串行预热后恢复（负载 0.13、命中毫秒级）。教训：4C4G 无 swap 是内存刀尖，任何缓存全冷 + 并发访问都会演变成 OOM；单飞是把"冷缓存风暴"从根上拆掉的关键

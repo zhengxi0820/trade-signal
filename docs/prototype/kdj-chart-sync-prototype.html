@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KDJ 双周期图表 + 其他参数 — 原型</title>
+<!--
+  原型（throwaway）：KDJ 图表双周期展示 + 参数设置新增「其他参数」两个开关。
+  ?variant=A|B|C 或底部条/左右方向键切换。
+  评估点：
+    1) 历史截止周期时，截止周期图下方多一张「最新周期」图，标题/样式是否合适
+    2) 参数设置里两个新开关的文案与位置
+    3) 参数「点击查询后关闭KDJ和价格线图表」的关闭行为（含最新周期图）
+  交互口径（与生产一致）：查询触发制；截止周期=最新周期时不展示额外图表。
+  演示规则：mock 数据（000656 金科股份 合成行情），不接后端；KDJ 按 n=9 现算。
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f2f4f8; font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; color: #303133; }
+  #app { max-width: 1280px; margin: 0 auto; padding: 16px 24px 80px; }
+  button { cursor: pointer; border: none; background: none; font-family: inherit; }
+
+  .nav-underline { display: flex; justify-content: center; gap: 36px; border-bottom: 1px solid #e4ebf3; margin-bottom: 12px; }
+  .nav-underline a { position: relative; padding: 6px 2px 10px; font-size: 15px; color: #7a93b0; cursor: pointer; text-decoration: none; }
+  .nav-underline a.on { color: #1a3a5c; font-weight: 600; }
+  .nav-underline a.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: #2b8fe8; border-radius: 2px; }
+
+  .toolbar { background: #fff; border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.05); padding: 16px 20px; margin-bottom: 16px; }
+  .period-btns { display: flex; gap: 0; margin-bottom: 14px; }
+  .ptab { padding: 7px 18px; font-size: 14px; color: #606266; border: 1px solid #dcdfe6; background: #fff; }
+  .ptab:first-child { border-radius: 6px 0 0 6px; }
+  .ptab:last-child { border-radius: 0 6px 6px 0; }
+  .ptab.on { background: #409eff; color: #fff; border-color: #409eff; }
+  .selector-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .selector-row .label { color: #606266; font-size: 14px; }
+  .sel, .input { height: 32px; border: 1px solid #dcdfe6; border-radius: 4px; padding: 0 10px; font-size: 14px; background: #fff; }
+  .btn { height: 32px; padding: 0 16px; border-radius: 4px; font-size: 14px; }
+  .btn-primary { background: #409eff; color: #fff; }
+  .btn-plain { border: 1px solid #409eff; color: #409eff; background: #fff; }
+  .query-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ffb020; margin-left: 5px; vertical-align: middle; }
+
+  .param-panel { margin-top: 16px; border-top: 1px dashed #dcdfe6; padding-top: 16px; font-size: 13px; color: #606266; }
+  .param-panel .divider { color: #909399; font-weight: 600; margin: 12px 0 8px; font-size: 13px; }
+  .param-panel .prow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .param-panel .plabel { width: 210px; color: #606266; }
+  .switch { position: relative; width: 40px; height: 20px; border-radius: 10px; background: #dcdfe6; transition: background .2s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .switch.on { background: #409eff; }
+  .switch.on::after { left: 22px; }
+  .new-badge { color: #409eff; font-size: 12px; border: 1px solid #b3d8ff; border-radius: 3px; padding: 0 4px; }
+
+  .card { background: #fff; border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.05); margin-bottom: 16px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; padding: 13px 20px; border-bottom: 1px solid #ebeef5; font-weight: 600; font-size: 15px; }
+  .card-body { padding: 12px 20px; }
+  .chart-head .period { color: #409eff; font-size: 13px; font-weight: 500; background: #ecf5ff; border-radius: 4px; padding: 2px 8px; }
+  .chart-box { width: 100%; height: 380px; }
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th { text-align: left; color: #909399; font-weight: 500; padding: 10px 12px; border-bottom: 1px solid #ebeef5; background: #fafafa; }
+  .table td { padding: 9px 12px; border-bottom: 1px solid #f0f2f5; font-variant-numeric: tabular-nums; }
+  .table tr.sel-row td { background: #ecf5ff; }
+  .fav { color: #c8d8ea; }
+  .fav.on { color: #ffb020; }
+
+  /* 变体 B：单卡双图 + 分隔线 */
+  .inner-label { font-size: 13px; color: #909399; margin: 8px 2px; }
+  .inner-label b { color: #303133; }
+  .divider-line { border-top: 1px dashed #dcdfe6; margin: 10px 0; }
+  /* 变体 C：最新周期图可折叠 */
+  .fold { cursor: pointer; user-select: none; }
+  .fold .arrow { display: inline-block; margin-right: 6px; transition: transform .2s; color: #909399; }
+  .fold.collapsed .arrow { transform: rotate(-90deg); }
+
+  /* 底部变体切换条（原型专用） */
+  .bottom-bar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 99;
+    display: flex; align-items: center; gap: 12px; background: rgba(26,58,92,.92); color: #fff;
+    padding: 8px 16px; border-radius: 20px; font-size: 13px; box-shadow: 0 6px 20px rgba(20,60,120,.35); }
+  .bottom-bar button { color: #fff; font-size: 16px; width: 26px; height: 26px; border-radius: 50%; background: rgba(255,255,255,.14); }
+  .hint { text-align: center; color: #b3c6dc; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <nav class="nav-underline">
+    <a class="on">全市场</a><a>我的自选</a>
+  </nav>
+
+  <div class="toolbar">
+    <div class="period-btns">
+      <span class="ptab">日线</span><span class="ptab on">周线</span><span class="ptab">月线</span><span class="ptab">季线</span>
+    </div>
+    <div class="selector-row">
+      <span class="label">截止周期</span>
+      <select id="cutoff" class="sel">
+        <option value="latest">最新周期（2026/08/03 - 08/07）</option>
+        <option value="hist" selected>历史周期（2026/07/27 - 07/31）</option>
+      </select>
+      <input class="input" value="代码 / 名称筛选" style="width: 190px">
+      <button class="btn btn-plain">参数设置</button>
+      <button class="btn btn-primary" id="queryBtn">查询</button>
+    </div>
+
+    <div class="param-panel">
+      <div class="divider">KDJ 参数</div>
+      <div class="prow"><span class="plabel">N（RSV 窗口）</span><span>9</span><span class="plabel" style="width:120px;margin-left:16px">M1（K 平滑）</span><span>3</span><span class="plabel" style="width:120px;margin-left:16px">M2（D 平滑）</span><span>3</span></div>
+      <div class="divider">信号限制项</div>
+      <div class="prow"><span class="plabel">上次金叉交汇上限</span><span>20</span><span class="plabel" style="width:120px;margin-left:16px">当前金叉交汇上限</span><span>50</span></div>
+      <div class="divider">其他参数 <span class="new-badge">新增</span></div>
+      <div class="prow">
+        <span class="plabel">点击查询后关闭KDJ和价格线图表</span>
+        <span id="swClose" class="switch"></span>
+      </div>
+      <div class="prow">
+        <span class="plabel">查询历史周期时同步展示最新周期</span>
+        <span id="swLatest" class="switch on"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span>所有股票（4）</span></div>
+    <div class="card-body" style="padding:0">
+      <table class="table">
+        <thead><tr><th style="width:46px">★</th><th>代码</th><th>名称</th><th>收盘</th><th>K</th><th>D</th><th>J</th></tr></thead>
+        <tbody>
+          <tr class="sel-row"><td class="fav on">★</td><td>000656</td><td>金科股份</td><td>1.42</td><td>68.3</td><td>55.1</td><td>94.7</td></tr>
+          <tr><td class="fav">☆</td><td>600519</td><td>贵州茅台</td><td>1458.44</td><td>51.5</td><td>63.6</td><td>27.4</td></tr>
+          <tr><td class="fav">☆</td><td>300750</td><td>宁德时代</td><td>186.20</td><td>44.8</td><td>52.9</td><td>28.6</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 变体 A：两张独立卡片堆叠，最新周期图标题带「最新周期」 -->
+  <div data-variant="A">
+    <div class="card chart-card" id="cardA-cut">
+      <div class="card-head chart-head"><span>000656 金科股份&nbsp;&nbsp;价格走势 / KDJ</span><span class="period">截止周期 2026/07/27~07/31</span></div>
+      <div class="card-body"><div id="vcA-cut" class="chart-box"></div></div>
+    </div>
+    <div class="card chart-card" id="cardA-latest">
+      <div class="card-head chart-head"><span>000656 金科股份&nbsp;&nbsp;价格走势 / KDJ 最新周期</span><span class="period">最新周期 2026/08/03~08/07</span></div>
+      <div class="card-body"><div id="vcA-latest" class="chart-box"></div></div>
+    </div>
+  </div>
+
+  <!-- 变体 B：单卡片内两张图，分隔线 + 小标签 -->
+  <div data-variant="B" hidden>
+    <div class="card">
+      <div class="card-head chart-head"><span>000656 金科股份&nbsp;&nbsp;价格走势 / KDJ</span><span class="period">周线</span></div>
+      <div class="card-body">
+        <div class="inner-label"><b>截止周期</b>&nbsp; 2026/07/27~07/31</div>
+        <div id="vcB-cut" class="chart-box" style="height:330px"></div>
+        <div class="divider-line"></div>
+        <div class="inner-label"><b>最新周期</b>&nbsp; 2026/08/03~08/07</div>
+        <div id="vcB-latest" class="chart-box" style="height:330px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 变体 C：最新周期图可折叠，默认展开 -->
+  <div data-variant="C" hidden>
+    <div class="card chart-card" id="cardC-cut">
+      <div class="card-head chart-head"><span>000656 金科股份&nbsp;&nbsp;价格走势 / KDJ</span><span class="period">截止周期 2026/07/27~07/31</span></div>
+      <div class="card-body"><div id="vcC-cut" class="chart-box"></div></div>
+    </div>
+    <div class="card chart-card" id="cardC-latest">
+      <div class="card-head chart-head fold" id="foldC"><span class="arrow">▼</span><span>000656 金科股份&nbsp;&nbsp;价格走势 / KDJ 最新周期</span><span class="period">最新周期 2026/08/03~08/07</span></div>
+      <div class="card-body" id="bodyC-latest"><div id="vcC-latest" class="chart-box"></div></div>
+    </div>
+  </div>
+
+  <div class="hint">原型：mock 数据（000656 金科股份 合成行情），不接后端。开关与查询可交互，查看底部说明。</div>
+</div>
+
+<div class="bottom-bar">
+  <button id="prev">‹</button>
+  <span id="vname"></span>
+  <button id="next">›</button>
+</div>
+
+<script src="../../src/main/resources/static/vendor/echarts.min.js"></script>
+<script>
+(function () {
+  var VARIANTS = {
+    A: 'A — 双卡片堆叠（标题带「最新周期」）',
+    B: 'B — 单卡片双图 + 分隔线',
+    C: 'C — 最新周期图可折叠'
+  };
+  var keys = Object.keys(VARIANTS);
+  function currentVariant() {
+    var v = new URLSearchParams(location.search).get('variant');
+    return VARIANTS[v] ? v : 'A';
+  }
+  function show(v) {
+    keys.forEach(function (k) {
+      document.querySelectorAll('[data-variant="' + k + '"]').forEach(function (el) { el.hidden = k !== v; });
+    });
+    document.getElementById('vname').textContent = VARIANTS[v];
+    renderCharts();
+  }
+  function go(v) {
+    var url = new URL(location.href);
+    url.searchParams.set('variant', v);
+    history.replaceState(null, '', url);
+    show(v);
+  }
+  function step(dir) {
+    var i = keys.indexOf(currentVariant());
+    go(keys[(i + dir + keys.length) % keys.length]);
+  }
+  document.getElementById('prev').onclick = function () { step(-1); };
+  document.getElementById('next').onclick = function () { step(1); };
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+
+  // ---- mock 行情（确定性伪随机，000656 金科股份）----
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function bizDays(end, n) {
+    var out = [], d = new Date(end), added = 0;
+    while (added < n) {
+      var day = d.getDay();
+      if (day !== 0 && day !== 6) { out.unshift(fmt(d)); added++; }
+      d.setDate(d.getDate() - 1);
+    }
+    return out;
+  }
+  function fmt(d) {
+    return d.getFullYear() + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0');
+  }
+  function genSeries(endDate, n, seed) {
+    var dates = bizDays(endDate, n);
+    var rnd = mulberry32(seed);
+    var close = 1.35, rows = [];
+    dates.forEach(function (d) {
+      var open = close * (1 + (rnd() - 0.48) * 0.02);
+      var high = Math.max(open, close) * (1 + rnd() * 0.018);
+      var low = Math.min(open, close) * (1 - rnd() * 0.018);
+      close = (open + close) / 2 * (1 + (rnd() - 0.5) * 0.025);
+      close = Math.max(close, 0.9);
+      rows.push({ d: d, o: +open.toFixed(3), h: +high.toFixed(3), l: +low.toFixed(3), c: +close.toFixed(3) });
+    });
+    // KDJ n=9
+    var k = 50, d_ = 50, kdj = [];
+    rows.forEach(function (r, i) {
+      var lo = r.l, hi = r.h;
+      for (var j = Math.max(0, i - 8); j <= i; j++) { lo = Math.min(lo, rows[j].l); hi = Math.max(hi, rows[j].h); }
+      var rsv = hi === lo ? 50 : (r.c - lo) / (hi - lo) * 100;
+      k = (2 * k + rsv) / 3; d_ = (2 * d_ + k) / 3;
+      kdj.push({ k: +k.toFixed(2), d: +d_.toFixed(2), j: +(3 * k - 2 * d_).toFixed(2) });
+    });
+    return { rows: rows, kdj: kdj };
+  }
+
+  // ---- 状态与交互 ----
+  var cutoff = 'hist';        // hist | latest
+  var closeOnQuery = false;   // 参数1
+  var showLatest = true;      // 参数2
+  var chartsHidden = false;
+
+  function latestVisible() {
+    return !chartsHidden && showLatest && cutoff === 'hist';
+  }
+  function syncCharts() {
+    var v = currentVariant();
+    document.querySelectorAll('[data-variant="' + v + '"] .card').forEach(function (c) {
+      c.style.display = (v === 'A' || v === 'C')
+        ? (chartsHidden || (c.id.indexOf('latest') >= 0 && !latestVisible()) ? 'none' : '')
+        : '';
+    });
+    if (v === 'B') {
+      var cardB = document.querySelector('[data-variant="B"] .card');
+      if (cardB) cardB.style.display = chartsHidden ? 'none' : '';
+      var vis = latestVisible();
+      [document.getElementById('vcB-latest'),
+       document.querySelector('[data-variant="B"] .inner-label:last-child'),
+       document.querySelector('[data-variant="B"] .divider-line')].forEach(function (el) {
+        if (el) el.style.display = vis ? '' : 'none';
+      });
+    }
+    renderCharts();
+  }
+  function renderCharts() {
+    var v = currentVariant();
+    var cutEl = document.getElementById('vc' + v + '-cut');
+    var latEl = document.getElementById('vc' + v + '-latest');
+    if (cutEl && !chartsHidden) drawChart(cutEl, genSeries(new Date(2026, 6, 31), 50, 100 + v.charCodeAt(0)));
+    if (latEl && latestVisible()) drawChart(latEl, genSeries(new Date(2026, 7, 7), 50, 200 + v.charCodeAt(0)));
+  }
+  function drawChart(el, data) {
+    el.innerHTML = '';
+    var labels = data.rows.map(function (r) { return r.d; });
+    var candle = data.rows.map(function (r) { return [r.o, r.c, r.l, r.h]; });
+    var chart = echarts.init(el);
+    chart.setOption({
+      animation: false,
+      tooltip: { trigger: 'axis' },
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },
+      grid: [
+        { left: 52, right: 16, top: 10, height: '52%' },
+        { left: 52, right: 16, top: '68%', height: '20%' }
+      ],
+      xAxis: [
+        { type: 'category', data: labels, boundaryGap: true, axisLine: { lineStyle: { color: '#dcdfe6' } }, axisLabel: { fontSize: 10 } },
+        { type: 'category', gridIndex: 1, data: labels, axisLabel: { show: false } }
+      ],
+      yAxis: [
+        { scale: true, splitLine: { lineStyle: { color: '#f0f2f5' } }, axisLabel: { fontSize: 10 } },
+        { gridIndex: 1, scale: true, splitLine: { show: false }, axisLabel: { fontSize: 10 } }
+      ],
+      dataZoom: [
+        { type: 'inside', xAxisIndex: [0, 1], start: 40, end: 100 },
+        { type: 'slider', xAxisIndex: [0, 1], bottom: 0, height: 18, start: 40, end: 100 }
+      ],
+      series: [
+        { name: 'K线', type: 'candlestick', data: candle,
+          itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' } },
+        { name: 'K', type: 'line', data: data.kdj.map(function (p) { return p.k; }), xAxisIndex: 1, yAxisIndex: 1,
+          smooth: true, showSymbol: false, lineStyle: { width: 1.4, color: '#409eff' } },
+        { name: 'D', type: 'line', data: data.kdj.map(function (p) { return p.d; }), xAxisIndex: 1, yAxisIndex: 1,
+          smooth: true, showSymbol: false, lineStyle: { width: 1.4, color: '#e6a23c' } },
+        { name: 'J', type: 'line', data: data.kdj.map(function (p) { return p.j; }), xAxisIndex: 1, yAxisIndex: 1,
+          smooth: true, showSymbol: false, lineStyle: { width: 1.4, color: '#909399' } }
+      ]
+    });
+  }
+
+  // 开关
+  function bindSwitch(id, onChange) {
+    document.getElementById(id).onclick = function () {
+      this.classList.toggle('on');
+      onChange(this.classList.contains('on'));
+    };
+  }
+  bindSwitch('swClose', function (on) { closeOnQuery = on; });
+  bindSwitch('swLatest', function (on) { showLatest = on; syncCharts(); });
+  // 截止周期选择
+  document.getElementById('cutoff').onchange = function () {
+    cutoff = this.value;
+    syncCharts();
+  };
+  // 查询：参数1 开 → 关闭图表；关 → 图表保持（跟随刷新）
+  document.getElementById('queryBtn').onclick = function () {
+    chartsHidden = closeOnQuery;
+    syncCharts();
+  };
+  // 变体 C 折叠
+  document.getElementById('foldC').onclick = function () {
+    this.classList.toggle('collapsed');
+    document.getElementById('bodyC-latest').style.display = this.classList.contains('collapsed') ? 'none' : '';
+  };
+
+  show(currentVariant());
+})();
+</script>
+</body>
+</html>

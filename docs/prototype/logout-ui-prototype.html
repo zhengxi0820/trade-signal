@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>退出登录原型 — 交易位信号系统</title>
+<!--
+  原型（throwaway）：退出登录入口 UI 三变体，?variant=A|B|C 或底部条/左右方向键切换。
+  评估点：退出入口放在哪、长什么样、退出后回到登录遮罩的流程是否顺。
+  交互口径（与生产一致）：登录 7 天会话；点退出 → 确认 → 清 Cookie + 服务端 token 吊销 → 回登录页。
+  演示规则：三个变体共用同一套 mock 流程，不接后端。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f4f8; color: #303133; }
+  button { cursor: pointer; border: none; background: none; font-family: inherit; }
+
+  #page { max-width: 1280px; margin: 0 auto; padding: 16px 24px; }
+
+  /* ============ 共享：提示条 ============ */
+  .toast { position: fixed; top: 24px; left: 50%; transform: translateX(-50%) translateY(-8px);
+    padding: 10px 22px; border-radius: 8px; font-size: 14px; z-index: 9999;
+    opacity: 0; pointer-events: none; transition: all .25s ease; box-shadow: 0 6px 24px rgba(30,90,180,.15); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.success { background: #ecf7ff; color: #0b6bcb; border: 1px solid #a8dcf7; }
+  .toast.error { background: #fef0f0; color: #d03050; border: 1px solid #fbc4d0; }
+
+  /* ============ 共享：登录遮罩（退出后出现，简化版生产玻璃卡） ============ */
+  .auth-overlay { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, #f4f9ff 0%, #e8f2fd 45%, #dcebfb 100%); }
+  .auth-overlay[hidden] { display: none; }
+  .auth-overlay::before { content: ""; position: absolute; width: 480px; height: 480px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(64,158,255,.16), transparent 70%); top: -120px; right: -100px; }
+  .auth-overlay::after { content: ""; position: absolute; width: 380px; height: 380px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(56,189,248,.14), transparent 70%); bottom: -100px; left: -80px; }
+  .auth-card { position: relative; z-index: 1; width: 340px; padding: 40px 38px 32px;
+    background: rgba(255,255,255,.72); backdrop-filter: blur(14px);
+    border: 1px solid rgba(120,180,240,.35); border-radius: 18px;
+    box-shadow: 0 18px 60px rgba(50,110,200,.12), 0 0 0 1px rgba(255,255,255,.6) inset; }
+  .auth-card .logo { text-align: center; margin-bottom: 8px; }
+  .auth-card h1 { text-align: center; font-size: 19px; font-weight: 600; color: #1a3a5c; letter-spacing: 2px; }
+  .auth-card .sub { text-align: center; font-size: 12px; color: #7ca3cc; letter-spacing: 4px; margin: 6px 0 26px; }
+  .auth-card .field { margin-bottom: 16px; }
+  .auth-card input { width: 100%; border: none; border-bottom: 1.5px solid #cfe2f5; background: transparent;
+    padding: 10px 2px; font-size: 14px; color: #1a3a5c; outline: none; transition: border-color .2s; }
+  .auth-card input:focus { border-bottom-color: #3b9eff; }
+  .auth-card input::placeholder { color: #a8c4e0; }
+  .auth-card .btn { width: 100%; margin-top: 10px; padding: 12px; border-radius: 10px; font-size: 15px;
+    letter-spacing: 6px; color: #fff; background: linear-gradient(135deg, #4aa8ff, #2b8fe8);
+    box-shadow: 0 6px 20px rgba(59,158,255,.35); transition: transform .15s, box-shadow .15s; }
+  .auth-card .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(59,158,255,.45); }
+  .auth-card .note { text-align: center; margin-top: 16px; font-size: 12px; color: #8fb0d4; }
+
+  /* ============ 共享：toolbar 与页面 mock ============ */
+  .toolbar { position: relative; background: #fff; border: 1px solid #e4e7ed; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); padding: 12px 20px 16px; margin-bottom: 16px; }
+  .nav-underline { display: flex; justify-content: center; gap: 36px; border-bottom: 1px solid #e4ebf3; margin-bottom: 14px; }
+  .nav-underline a { position: relative; padding: 4px 2px 10px; font-size: 15px; color: #7a93b0; cursor: pointer; }
+  .nav-underline a.on { color: #1a3a5c; font-weight: 600; }
+  .nav-underline a.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: #2b8fe8; border-radius: 2px; }
+  .period-btns { margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+  .period-btns .chip { padding: 5px 14px; border-radius: 18px; font-size: 13px; color: #5b7fa3;
+    border: 1px solid #d7e5f3; background: #f4f9fe; }
+  .period-btns .chip.on { color: #fff; background: #2b8fe8; border-color: #2b8fe8; }
+  .proto-tag { font-size: 12px; color: #909399; margin-left: 8px; }
+  .selector-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .selector-row .label { color: #606266; font-size: 14px; }
+  .mock-input { width: 170px; padding: 7px 10px; border: 1px solid #d7e2ee; border-radius: 5px;
+    font-size: 13px; color: #303133; background: #fff; }
+  .mock-btn { padding: 7px 16px; border-radius: 5px; font-size: 13px; }
+  .mock-btn.plain { color: #2b8fe8; border: 1px solid #bcd9f5; background: #fff; }
+  .mock-btn.primary { color: #fff; background: #2b8fe8; }
+
+  /* mock 表格卡片 */
+  .cards { display: flex; gap: 16px; }
+  .mock-card { flex: 1; min-width: 0; background: #fff; border: 1px solid #e4e7ed; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+  .mock-card .head { display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border-bottom: 1px solid #ebeef5; font-weight: 600; font-size: 15px; }
+  .mock-card table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .mock-card th, .mock-card td { padding: 8px 12px; text-align: right; white-space: nowrap; }
+  .mock-card th:first-child, .mock-card td:first-child { text-align: left; }
+  .mock-card th { color: #909399; font-weight: 500; border-bottom: 1px solid #ebeef5; }
+  .mock-card td { color: #606266; border-bottom: 1px solid #f2f6fb; }
+  .mock-card tr:last-child td { border-bottom: none; }
+  .mock-card .num { color: #303133; font-variant-numeric: tabular-nums; }
+
+  /* ============ 变体 A：页签行右侧文字按钮 ============ */
+  .logout-a { position: absolute; right: 20px; top: 7px; display: flex; align-items: center; gap: 5px;
+    padding: 5px 12px; border: 1px solid #d7e2ee; border-radius: 6px; font-size: 13px; color: #606266;
+    background: #fff; transition: color .15s, border-color .15s; }
+  .logout-a:hover { color: #d03050; border-color: #f3b7c0; background: #fff7f8; }
+  .logout-a svg { width: 14px; height: 14px; }
+
+  /* hidden 属性兜底：display:flex 等作者样式会覆盖 UA 的 [hidden]{display:none}，
+     必须显式压过，否则三个变体的控件会同时显示、切换失效 */
+  .logout-a[hidden], .user-b[hidden], .topbar-c[hidden] { display: none; }
+
+  /* ============ 变体 B：头像 + 用户名下拉 ============ */
+  .user-b { position: absolute; right: 20px; top: 4px; display: flex; align-items: center; gap: 8px;
+    padding: 4px 8px; border-radius: 18px; cursor: pointer; transition: background .15s; }
+  .user-b:hover { background: #f2f7fc; }
+  .user-b .avatar { width: 28px; height: 28px; border-radius: 50%; color: #fff; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #4aa8ff, #2b8fe8); }
+  .user-b .name { font-size: 13px; color: #303133; }
+  .user-b .caret { font-size: 10px; color: #909399; }
+  .user-b.open .caret { transform: rotate(180deg); }
+  .drop-b { position: absolute; right: 20px; top: 42px; width: 190px; background: #fff;
+    border: 1px solid #e4e7ed; border-radius: 8px; box-shadow: 0 8px 24px rgba(30,60,110,.12);
+    padding: 6px; z-index: 100; }
+  .drop-b[hidden] { display: none; }
+  .drop-b .who { padding: 8px 10px; font-size: 12px; color: #909399; border-bottom: 1px solid #f0f4f9; }
+  .drop-b .who b { color: #303133; font-size: 13px; }
+  .drop-b .act { display: flex; align-items: center; gap: 7px; width: 100%; padding: 9px 10px;
+    border-radius: 6px; font-size: 13px; color: #d03050; text-align: left; }
+  .drop-b .act:hover { background: #fff3f4; }
+  .drop-b .act svg { width: 14px; height: 14px; }
+
+  /* ============ 变体 C：独立顶栏 + 确认弹窗 ============ */
+  .topbar-c { display: flex; align-items: center; justify-content: space-between;
+    background: #fff; border-bottom: 1px solid #e4e7ed; padding: 0 24px; height: 54px; }
+  .topbar-c .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600;
+    color: #1a3a5c; letter-spacing: 1px; }
+  .topbar-c .fresh { margin-left: 14px; font-size: 12px; color: #7ca3cc; background: #f0f7ff;
+    border: 1px solid #d9e9fa; border-radius: 999px; padding: 3px 10px; font-weight: 400; }
+  .topbar-c .right { display: flex; align-items: center; gap: 14px; }
+  .topbar-c .user { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #303133; }
+  .topbar-c .avatar { width: 28px; height: 28px; border-radius: 50%; color: #fff; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #4aa8ff, #2b8fe8); }
+  .logout-c { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px;
+    font-size: 13px; color: #d03050; border: 1px solid #eec2c9; background: #fff; transition: background .15s; }
+  .logout-c:hover { background: #fff3f4; }
+  .logout-c svg { width: 14px; height: 14px; }
+  /* 确认弹窗 */
+  .modal-mask { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center;
+    background: rgba(20,40,70,.35); }
+  .modal-mask[hidden] { display: none; }
+  .modal { width: 320px; background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(20,50,90,.25);
+    padding: 24px 24px 18px; }
+  .modal h3 { font-size: 16px; color: #1a3a5c; }
+  .modal p { font-size: 13px; color: #7a8ba0; margin: 10px 0 20px; line-height: 1.7; }
+  .modal .btns { display: flex; gap: 10px; justify-content: flex-end; }
+  .modal .btns button { padding: 7px 16px; border-radius: 6px; font-size: 13px; }
+  .modal .btns .ghost { color: #606266; border: 1px solid #d7e2ee; background: #fff; }
+  .modal .btns .danger { color: #fff; background: #d03050; }
+
+  /* ============ 原型切换条（不属于被评估的设计） ============ */
+  .proto-bar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10000;
+    display: flex; align-items: center; gap: 14px; padding: 8px 16px; border-radius: 999px;
+    background: #16283c; color: #cfe3f7; font-size: 13px; box-shadow: 0 8px 30px rgba(10,30,60,.35); }
+  .proto-bar button { background: #26405c; color: #cfe3f7; width: 28px; height: 28px; border-radius: 50%;
+    font-size: 15px; line-height: 1; }
+  .proto-bar button:hover { background: #35577c; }
+  .proto-bar .name { min-width: 200px; text-align: center; }
+
+  .logout-icon { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+
+<div id="page">
+  <!-- 变体 C 专属顶栏 -->
+  <div class="topbar-c" data-variant="C" hidden>
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8l-6-4.6h7.6z" fill="#3b9eff"/>
+      </svg>
+      交易位信号系统
+      <span class="fresh">数据更新至 20260810</span>
+    </div>
+    <div class="right">
+      <div class="user"><span class="avatar">A</span>admin</div>
+      <button class="logout-c" data-logout="c">
+        <svg class="logout-icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        退出登录
+      </button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="nav-underline">
+      <a class="on">全市场</a><a>我的自选</a>
+      <!-- 变体 A：页签行右侧文字按钮 -->
+      <button class="logout-a" data-logout="a" hidden>
+        <svg class="logout-icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        退出登录
+      </button>
+      <!-- 变体 B：头像 + 用户名下拉 -->
+      <div class="user-b" data-variant="B" hidden>
+        <span class="avatar">A</span><span class="name">admin</span><span class="caret">▼</span>
+      </div>
+      <div class="drop-b" id="dropB" hidden>
+        <div class="who">当前用户 <b>admin</b></div>
+        <button class="act" data-logout="b">
+          <svg class="logout-icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+          退出登录
+        </button>
+      </div>
+    </div>
+
+    <div class="period-btns">
+      <span class="chip on">日线</span><span class="chip">周线</span><span class="chip">月线</span><span class="chip">季线</span>
+      <span class="proto-tag">原型 mock 数据，非真实行情</span>
+    </div>
+    <div class="selector-row">
+      <span class="label">截止周期</span>
+      <input class="mock-input" value="2026/08/10">
+      <input class="mock-input" placeholder="代码 / 名称筛选" style="width: 180px">
+      <button class="mock-btn plain">参数设置</button>
+      <button class="mock-btn primary">查询</button>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="mock-card">
+      <div class="head"><span>金叉股票（3）</span></div>
+      <table>
+        <tr><th>代码</th><th>名称</th><th>收盘价</th><th>K</th><th>D</th><th>J</th></tr>
+        <tr><td>600519</td><td>贵州茅台</td><td class="num">1,455.20</td><td class="num">78.32</td><td class="num">65.10</td><td class="num">104.76</td></tr>
+        <tr><td>000001</td><td>平安银行</td><td class="num">10.86</td><td class="num">72.15</td><td class="num">61.33</td><td class="num">93.79</td></tr>
+        <tr><td>601318</td><td>中国平安</td><td class="num">42.60</td><td class="num">69.87</td><td class="num">58.02</td><td class="num">93.57</td></tr>
+      </table>
+    </div>
+    <div class="mock-card">
+      <div class="head"><span>交易位股票（2）</span></div>
+      <table>
+        <tr><th>代码</th><th>名称</th><th>收盘价</th><th>K</th><th>D</th><th>J</th></tr>
+        <tr><td>000001</td><td>平安银行</td><td class="num">10.86</td><td class="num">72.15</td><td class="num">61.33</td><td class="num">93.79</td></tr>
+        <tr><td>600036</td><td>招商银行</td><td class="num">34.12</td><td class="num">75.44</td><td class="num">60.91</td><td class="num">104.50</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 确认弹窗（变体 C 用） -->
+<div class="modal-mask" id="confirm" hidden>
+  <div class="modal">
+    <h3>确认退出登录？</h3>
+    <p>退出后当前设备需重新登录才能继续使用，<br>已登录的其他设备不受影响。</p>
+    <div class="btns">
+      <button class="ghost" id="cancelC">取消</button>
+      <button class="danger" data-logout="c">退出登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 登录遮罩（退出后出现） -->
+<div class="auth-overlay" id="authOverlay" hidden>
+  <div class="auth-card">
+    <div class="logo">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8l-6-4.6h7.6z" fill="#3b9eff"/>
+      </svg>
+    </div>
+    <h1>交易位信号系统</h1>
+    <div class="sub">TRADE SIGNAL</div>
+    <div class="field"><input placeholder="用户名" value="admin"></div>
+    <div class="field"><input type="password" placeholder="密码"></div>
+    <button class="btn" id="relogin">进 入</button>
+    <div class="note">会话 7 天有效；登出后本设备需重新登录</div>
+  </div>
+</div>
+
+<!-- 原型切换条 -->
+<div class="proto-bar">
+  <button id="prev" title="←">‹</button>
+  <span class="name" id="vname"></span>
+  <button id="next" title="→">›</button>
+</div>
+
+<script>
+(function () {
+  var VARIANTS = {
+    A: 'A — 页签行右侧文字按钮',
+    B: 'B — 头像 + 用户名下拉',
+    C: 'C — 独立顶栏 + 确认弹窗'
+  };
+  var keys = Object.keys(VARIANTS);
+
+  function currentVariant() {
+    var v = new URLSearchParams(location.search).get('variant');
+    return VARIANTS[v] ? v : 'A';
+  }
+  function show(v) {
+    keys.forEach(function (k) {
+      var on = k === v;
+      document.querySelectorAll('[data-variant="' + k + '"]').forEach(function (el) {
+        el.hidden = !on;
+      });
+      if (k === 'A') {
+        document.querySelector('.logout-a').hidden = !on;
+      }
+      if (k === 'B') {
+        document.querySelector('#dropB').hidden = true;
+        document.querySelector('.user-b').classList.remove('open');
+      }
+    });
+    document.getElementById('vname').textContent = VARIANTS[v];
+  }
+  function go(v) {
+    var url = new URL(location.href);
+    url.searchParams.set('variant', v);
+    history.replaceState(null, '', url);
+    show(v);
+  }
+  function step(dir) {
+    var i = keys.indexOf(currentVariant());
+    go(keys[(i + dir + keys.length) % keys.length]);
+  }
+  document.getElementById('prev').onclick = function () { step(-1); };
+  document.getElementById('next').onclick = function () { step(1); };
+  document.addEventListener('keydown', function (e) {
+    var t = document.activeElement;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+
+  // ---- 演示交互（不接后端）----
+  var toastTimer = null;
+  function toast(msg, type) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast show ' + type;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.className = 'toast'; }, 2600);
+  }
+
+  // 变体 B：下拉开关（点外部 / ESC 关闭）
+  var userB = document.querySelector('.user-b');
+  userB.onclick = function (e) {
+    e.stopPropagation();
+    var open = userB.classList.toggle('open');
+    document.getElementById('dropB').hidden = !open;
+  };
+  document.addEventListener('click', function () {
+    userB.classList.remove('open');
+    document.getElementById('dropB').hidden = true;
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      userB.classList.remove('open');
+      document.getElementById('dropB').hidden = true;
+    }
+  });
+
+  // 变体 C：确认弹窗
+  document.querySelector('.logout-c').onclick = function () {
+    document.getElementById('confirm').hidden = false;
+  };
+  document.getElementById('cancelC').onclick = function () {
+    document.getElementById('confirm').hidden = true;
+  };
+
+  // 统一登出流程
+  document.querySelectorAll('[data-logout]').forEach(function (btn) {
+    btn.onclick = function () {
+      document.getElementById('confirm').hidden = true;
+      userB.classList.remove('open');
+      document.getElementById('dropB').hidden = true;
+      document.getElementById('authOverlay').hidden = false;
+      toast('已退出登录，token 已吊销（原型演示）', 'success');
+    };
+  });
+
+  // 重新登录（模拟）：回主页面
+  document.getElementById('relogin').onclick = function () {
+    document.getElementById('authOverlay').hidden = true;
+    toast('登录成功，7 天会话已开始（原型演示）', 'success');
+  };
+
+  show(currentVariant());
+})();
+</script>
+</body>
+</html>

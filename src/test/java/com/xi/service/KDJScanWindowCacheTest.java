@@ -1,12 +1,14 @@
 package com.xi.service;
 
 import com.xi.handler.KDJHandler;
+import com.xi.model.dto.KDJDTO;
 import com.xi.model.dto.PeriodBarDTO;
 import com.xi.model.param.KDJParam;
 import com.xi.model.query.StockQuoteQuery;
 import com.xi.model.vo.CrossStockVO;
 import com.xi.orm.entity.StockQuoteDO;
 import com.xi.orm.mapper.StockQuoteMapper;
+import com.xi.service.Impl.KDJServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +26,9 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +49,8 @@ class KDJScanWindowCacheTest {
     @Autowired
     private KDJService kdjService;
     @Autowired
+    private KDJServiceImpl kdjServiceImpl;
+    @Autowired
     private StockQuoteMapper stockQuoteMapper;
     @Autowired
     private ScanResultCache scanResultCache;
@@ -62,9 +68,12 @@ class KDJScanWindowCacheTest {
         scanResultCache.clear();
         scanBarsCache.watermarkTtlMs = 0;
         scanBarsCache.clear();
+        // 物化就绪标记/周期日历短缓存（60s）跨用例会串，逐用例重置
+        kdjServiceImpl.resetReadyCaches();
         jdbc.update("delete from stock_quote");
         jdbc.update("delete from stock_info");
         jdbc.update("delete from work_day");
+        jdbc.update("delete from stock_period_bar");
         for (String code : CODES) {
             jdbc.update("insert into stock_info(CODE, NAME, MARKET, BOARD_TYPE) values (?,?,?,?)",
                     code, "测试" + code, "SH", "0");
@@ -237,6 +246,12 @@ class KDJScanWindowCacheTest {
      * @param endInclusive 截止周期（日度 yyyymmdd），null = 不截断
      */
     private Map<String, CrossStockVO> referenceScan(String kdjType, ReferenceMode mode, String endInclusive) {
+        return referenceScan(kdjType, mode, endInclusive, tradeSignalDefaults());
+    }
+
+    /** 同上，trade-signal 过滤参数可覆盖（默认 goldInternalMax=15 之外的窗口用）。 */
+    private Map<String, CrossStockVO> referenceScan(String kdjType, ReferenceMode mode, String endInclusive,
+                                                    KDJParam tradeParams) {
         Map<String, CrossStockVO> result = new HashMap<>();
         BigDecimal n = new BigDecimal("9");
         BigDecimal m = new BigDecimal("3");
@@ -263,7 +278,7 @@ class KDJScanWindowCacheTest {
                     continue;
                 }
             } else if (mode == ReferenceMode.TRADE) {
-                if (!handler.isTradeSignal(bars, kdj, tradeSignalDefaults())) {
+                if (!handler.isTradeSignal(bars, kdj, tradeParams)) {
                     continue;
                 }
                 cross = handler.goldenCrossAt(kdj, last);
@@ -350,8 +365,23 @@ class KDJScanWindowCacheTest {
      */
     @Test
     void aggTablePathMatchesFullHistory() {
-        // 灌物化表：周 + 月 + 季，bars 由 handler 全历史聚合（等价于 scripts 物化口径）
-        for (String code : CODES) {
+        seedAggTable(CODES);
+        try {
+            for (String kdjType : new String[]{"1", "2", "3"}) {
+                KDJParam param = new KDJParam();
+                param.setKdjType(kdjType);
+                List<CrossStockVO> actual = kdjService.getAllStocks(param);
+                Map<String, CrossStockVO> expected = referenceScan(kdjType, ReferenceMode.ALL, null);
+                assertSameContent(expected, actual, "agg-table all-stocks kdjType=" + kdjType);
+            }
+        } finally {
+            jdbc.update("delete from stock_period_bar");
+        }
+    }
+
+    /** 用 KDJHandler.aggregate 全历史直算灌物化表（等价于 scripts 物化口径）。 */
+    private void seedAggTable(String[] codes) {
+        for (String code : codes) {
             StockQuoteQuery query = new StockQuoteQuery();
             query.setCode(code);
             query.setAdjust("1");
@@ -366,17 +396,269 @@ class KDJScanWindowCacheTest {
                 }
             }
         }
+    }
+
+    /**
+     * 历史截止批量兜底对拍（2026-08-26 P0）：截止早于 132 根窗口可切范围时，
+     * 周/月走物化表按截止上界批量读、日线批量读原始行聚合，结果仍须与全历史基准一致。
+     * 月线截止 2020-12（窗口 2015-08 起，切片 ~64 根 < 82/97）→ 必然落兜底；
+     * 周线/日线截止同理选老日期。
+     */
+    @Test
+    void historicalCutoffBatchFallbackMatchesFullHistory() {
+        seedAggTable(CODES);
         try {
-            for (String kdjType : new String[]{"1", "2", "3"}) {
+            // 月线：gold-cross（需 82）与 trade-signal（需 97）均不足切片
+            for (ReferenceMode mode : new ReferenceMode[]{ReferenceMode.GOLD, ReferenceMode.TRADE}) {
                 KDJParam param = new KDJParam();
-                param.setKdjType(kdjType);
-                List<CrossStockVO> actual = kdjService.getAllStocks(param);
-                Map<String, CrossStockVO> expected = referenceScan(kdjType, ReferenceMode.ALL, null);
-                assertSameContent(expected, actual, "agg-table all-stocks kdjType=" + kdjType);
+                param.setKdjType("2");
+                param.setTradeDate("20201215");
+                List<CrossStockVO> actual = mode == ReferenceMode.GOLD
+                        ? kdjService.getGold(param) : kdjService.getTradeSignalStockList(param);
+                Map<String, CrossStockVO> expected = referenceScan("2", mode, "20201231");
+                assertSameContent(expected, actual, "monthly cutoff fallback mode=" + mode);
             }
+            // 周线：截止 2023-06（窗口 2024-03 起，切片 0 根）
+            KDJParam weekly = new KDJParam();
+            weekly.setKdjType("1");
+            weekly.setTradeDateMin("20230626");
+            weekly.setTradeDateMax("20230630");
+            assertSameContent(referenceScan("1", ReferenceMode.GOLD, "20230630"),
+                    kdjService.getGold(weekly), "weekly cutoff fallback");
+            // 日线：截止 2023-06（窗口 ~132 个交易日在 2026）——批量原始行 + Java 聚合路径
+            KDJParam daily = new KDJParam();
+            daily.setKdjType("0");
+            daily.setTradeDate("20230630");
+            assertSameContent(referenceScan("0", ReferenceMode.GOLD, "20230630"),
+                    kdjService.getGold(daily), "daily cutoff fallback");
         } finally {
             jdbc.update("delete from stock_period_bar");
         }
+    }
+
+    /**
+     * goldInternalMax > 50 时窗口需求超过 132 根缓存宽度：全部股票按锚定批量重算
+     * （无截止参数 → 锚在最新、无上界），结果与全历史基准一致。
+     */
+    @Test
+    void oversizedWindowBatchFallbackMatchesFullHistory() {
+        seedAggTable(CODES);
+        try {
+            KDJParam param = new KDJParam();
+            param.setKdjType("2");
+            param.setGoldInternalMax(new BigDecimal("60"));
+            List<CrossStockVO> actual = kdjService.getTradeSignalStockList(param);
+            KDJParam refParams = tradeSignalDefaults();
+            refParams.setGoldInternalMax(new BigDecimal("60"));
+            Map<String, CrossStockVO> expected = referenceScan("2", ReferenceMode.TRADE, null, refParams);
+            assertSameContent(expected, actual, "monthly oversized window fallback");
+        } finally {
+            jdbc.update("delete from stock_period_bar");
+        }
+    }
+
+    /**
+     * 长期停牌股护栏（2026-08-26 P2）：总 bar 数 > 132 但 132nd-from-last 早于 SQL 窗口下界
+     * （两段行情：2019~2021 + 2026），带下界批读只拿到近期段 → 必须触发二次全量批读补齐，
+     * lastN 窗口与全历史一致，扫描结果不变。
+     */
+    @Test
+    void suspensionGapStockGetsFullReadGuard() {
+        String gapCode = "T00007";
+        jdbc.update("insert into stock_info(CODE, NAME, MARKET, BOARD_TYPE) values (?,?,?,?)",
+                gapCode, "测试停牌", "SH", "0");
+        seedGapDailies(gapCode);
+        seedAggTable(new String[]{gapCode});
+        try {
+            KDJParam param = new KDJParam();
+            param.setKdjType("1");
+            List<CrossStockVO> actual = kdjService.getAllStocks(param);
+            CrossStockVO vo = actual.stream()
+                    .filter(v -> gapCode.equals(v.getCode())).findFirst().orElse(null);
+            // 基准：全历史直算
+            StockQuoteQuery query = new StockQuoteQuery();
+            query.setCode(gapCode);
+            query.setAdjust("1");
+            List<KDJHandler.PeriodBar> full = handler.aggregate(stockQuoteMapper.queryAll(query), "1",
+                    LocalDate.parse(DATA_END, FMT), fixtureCalendar("1"));
+            assertTrue(full.size() > 132, "停牌股总 bar 数应 > 132（两段行情），实际 " + full.size());
+            List<KDJHandler.KdjValue> kdj = handler.calculate(full,
+                    new BigDecimal("9"), new BigDecimal("3"), new BigDecimal("3"));
+            int last = kdj.size() - 1;
+            assertNotNull(vo, "停牌股应出现在扫描结果中");
+            assertBigDecimalClose(kdj.get(last).k, vo.getK(), "停牌股 K 与全历史一致（暖机容差）");
+            assertBigDecimalClose(kdj.get(last).d, vo.getD(), "停牌股 D 与全历史一致（暖机容差）");
+            assertEquals(0, full.get(last).close.compareTo(vo.getClose()), "close 与全历史一致");
+            // bars 缓存窗口必须补满 132 根且第一根在下界之前（证明二次全量批读生效）
+            List<KDJHandler.PeriodBar> window = scanBarsCache.get(ScanBarsCache.key(gapCode, "1", "1"));
+            assertNotNull(window);
+            assertEquals(132, window.size(), "窗口应补满 132 根");
+            assertTrue(window.get(0).endDate.compareTo("20240101") < 0,
+                    "窗口第一根应来自停牌前的老段，实际 " + window.get(0).endDate);
+        } finally {
+            jdbc.update("delete from stock_period_bar");
+        }
+    }
+
+    /** 两段行情：2019-01~2021-06（约 130 根周线）+ 2026-01~2026-07（约 31 根周线）。 */
+    private void seedGapDailies(String code) {
+        List<Object[]> batch = new ArrayList<>();
+        for (LocalDate[] range : new LocalDate[][]{
+                {LocalDate.of(2019, 1, 2), LocalDate.of(2021, 6, 30)},
+                {LocalDate.of(2026, 1, 1), LocalDate.of(2026, 7, 31)}}) {
+            for (LocalDate d = range[0]; !d.isAfter(range[1]); d = d.plusDays(1)) {
+                if (d.getDayOfWeek() == DayOfWeek.SATURDAY || d.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                    continue;
+                }
+                BigDecimal open = new BigDecimal("10");
+                BigDecimal close = new BigDecimal("10.5");
+                batch.add(new Object[]{code, open, new BigDecimal("11"), new BigDecimal("9.8"), close,
+                        10000L, d.format(FMT), "1"});
+            }
+        }
+        jdbc.batchUpdate("insert into stock_quote(CODE,OPEN,HIGH,LOW,CLOSE,VOLUME,TRADE_DATE,ADJUST)"
+                + " values (?,?,?,?,?,?,?,?)", batch);
+    }
+
+    /**
+     * 单票 series 周/月/季读物化表对拍（2026-08-26 P1）：物化覆盖请求周期时直接读表，
+     * 序列（含早期 bar 与 KDJ 递推）与"全历史日线 + Java 聚合"逐字段一致。
+     */
+    @Test
+    void seriesAggTablePathMatchesDailyAggregation() {
+        seedAggTable(CODES);
+        try {
+            for (String kdjType : new String[]{"1", "2", "3"}) {
+                assertSeriesEqualsReference(seriesParam(CODES[0], kdjType), null);
+                assertSeriesEqualsReference(seriesParam(CODES[2], kdjType), null);
+            }
+            // 带截止周期：周（tradeDateMin/Max=周末 yyyymmdd）、月（tradeDate 截位到月）、季（末月 yyyymm）
+            KDJParam weeklyCut = seriesParam(CODES[0], "1");
+            weeklyCut.setTradeDateMin("20230626");
+            weeklyCut.setTradeDateMax("20230630");
+            assertSeriesEqualsReference(weeklyCut, "20230630");
+            assertSeriesEqualsReference(seriesParam(CODES[0], "2", "20200615"), "20200630");
+            KDJParam quarterCut = seriesParam(CODES[0], "3");
+            quarterCut.setTradeDateMin("202110");
+            quarterCut.setTradeDateMax("202112");
+            assertSeriesEqualsReference(quarterCut, "20211231");
+        } finally {
+            jdbc.update("delete from stock_period_bar");
+        }
+    }
+
+    /**
+     * 物化滞后回退：物化表缺最新周期（模拟自愈空窗）时，无截止 series 应回退全历史
+     * 日线聚合，最新周期不丢。
+     */
+    @Test
+    void seriesFallsBackWhenAggTableStale() {
+        seedAggTable(CODES);
+        jdbc.update("delete from stock_period_bar where period_type = '2' and period_end > '20241231'");
+        kdjServiceImpl.resetReadyCaches();
+        try {
+            List<KDJDTO> actual = kdjService.getAllKDJ(seriesParam(CODES[0], "2"));
+            List<KDJDTO> expected = seriesReference(CODES[0], "2", null);
+            assertEquals(expected.size(), actual.size(), "回退路径不应丢最新周期");
+            assertEquals(expected.get(expected.size() - 1).getTradeDate(),
+                    actual.get(actual.size() - 1).getTradeDate(), "最后一根应是最新已完结月");
+        } finally {
+            jdbc.update("delete from stock_period_bar");
+        }
+    }
+
+    /** series 入参构造；tradeDate 非空时按月线字段填（周/季的 min/max 由调用方补设）。 */
+    private KDJParam seriesParam(String code, String kdjType, String tradeDate) {
+        KDJParam param = seriesParam(code, kdjType);
+        param.setTradeDate(tradeDate);
+        return param;
+    }
+
+    private KDJParam seriesParam(String code, String kdjType) {
+        KDJParam param = new KDJParam();
+        param.setCode(code);
+        param.setKdjType(kdjType);
+        return param;
+    }
+
+    /** series 对拍：service 出参 vs 全历史日线聚合 + handler 直算逐字段比对。 */
+    private void assertSeriesEqualsReference(KDJParam param, String endInclusive) {
+        String code = param.getCode();
+        String kdjType = param.getKdjType();
+        List<KDJDTO> actual = kdjService.getAllKDJ(param);
+        List<KDJDTO> expected = seriesReference(code, kdjType, endInclusive);
+        assertEquals(expected.size(), actual.size(), code + " kdjType=" + kdjType + " 序列长度");
+        for (int i = 0; i < expected.size(); i++) {
+            KDJDTO x = expected.get(i);
+            KDJDTO a = actual.get(i);
+            String label = code + " kdjType=" + kdjType + " bar[" + i + "]";
+            assertEquals(x.getTradeDate(), a.getTradeDate(), label + " tradeDate");
+            assertEquals(x.getTradeDateMin(), a.getTradeDateMin(), label + " tradeDateMin");
+            assertEquals(x.getTradeDateMax(), a.getTradeDateMax(), label + " tradeDateMax");
+            assertEquals(0, x.getOpen().compareTo(a.getOpen()), label + " open");
+            assertEquals(0, x.getHigh().compareTo(a.getHigh()), label + " high");
+            assertEquals(0, x.getLow().compareTo(a.getLow()), label + " low");
+            assertEquals(0, x.getClose().compareTo(a.getClose()), label + " close");
+            assertEquals(0, x.getK().compareTo(a.getK()), label + " k");
+            assertEquals(0, x.getD().compareTo(a.getD()), label + " d");
+            assertEquals(0, x.getJ().compareTo(a.getJ()), label + " j");
+            assertEquals(x.getCrossType(), a.getCrossType(), label + " crossType");
+            if (x.getCrossValue() != null) {
+                assertEquals(0, x.getCrossValue().compareTo(a.getCrossValue()), label + " crossValue");
+            } else {
+                assertNull(a.getCrossValue(), label + " crossValue");
+            }
+        }
+    }
+
+    /** series 基准：全历史日线 → handler 聚合 → KDJ → 交叉标注（复刻 getAllKDJ 组装）。 */
+    private List<KDJDTO> seriesReference(String code, String kdjType, String endInclusive) {
+        StockQuoteQuery query = new StockQuoteQuery();
+        query.setCode(code);
+        query.setAdjust("1");
+        List<StockQuoteDO> full = stockQuoteMapper.queryAll(query);
+        List<KDJHandler.PeriodBar> bars = handler.aggregate(full, kdjType,
+                LocalDate.parse(DATA_END, FMT), fixtureCalendar(kdjType));
+        if (endInclusive != null) {
+            bars = bars.stream().filter(b -> b.endDate.compareTo(endInclusive) <= 0)
+                    .collect(Collectors.toList());
+        }
+        List<KDJHandler.KdjValue> kdj = handler.calculate(bars,
+                new BigDecimal("9"), new BigDecimal("3"), new BigDecimal("3"));
+        List<KDJDTO> result = new ArrayList<>(bars.size());
+        for (int i = 0; i < bars.size(); i++) {
+            KDJDTO dto = new KDJDTO();
+            dto.setOpen(bars.get(i).open);
+            dto.setHigh(bars.get(i).high);
+            dto.setLow(bars.get(i).low);
+            dto.setClose(bars.get(i).close);
+            dto.setK(kdj.get(i).k);
+            dto.setD(kdj.get(i).d);
+            dto.setJ(kdj.get(i).j);
+            switch (kdjType) {
+                case "1":
+                    dto.setTradeDateMin(bars.get(i).startDate);
+                    dto.setTradeDateMax(bars.get(i).endDate);
+                    break;
+                case "3":
+                    dto.setTradeDateMin(bars.get(i).startDate.substring(0, 6));
+                    dto.setTradeDateMax(bars.get(i).endDate.substring(0, 6));
+                    break;
+                default:
+                    dto.setTradeDate(bars.get(i).endDate);
+            }
+            KDJHandler.CrossPoint gold = handler.goldenCrossAt(kdj, i);
+            KDJHandler.CrossPoint death = handler.deathCrossAt(kdj, i);
+            if (gold != null) {
+                dto.setCrossType("gold");
+                dto.setCrossValue(gold.crossValue);
+            } else if (death != null) {
+                dto.setCrossType("death");
+                dto.setCrossValue(death.crossValue);
+            }
+            result.add(dto);
+        }
+        return result;
     }
 
     /**

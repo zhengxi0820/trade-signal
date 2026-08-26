@@ -20,6 +20,9 @@
     <select id="queryByCode" resultMap="PeriodBarDOResultMap">
         select * from stock_period_bar
         where period_type = #{periodType} and code = #{code} and adjust = #{adjust}
+        <if test="periodEndMin != null and periodEndMin != ''">
+            and period_end &gt;= #{periodEndMin}
+        </if>
         order by period_end
     </select>
 
@@ -28,6 +31,12 @@
         where period_type = #{periodType} and adjust = #{adjust}
           and code in
           <foreach collection="codes" item="c" open="(" separator="," close=")">#{c}</foreach>
+        <if test="periodEndMin != null and periodEndMin != ''">
+            and period_end &gt;= #{periodEndMin}
+        </if>
+        <if test="periodEndMax != null and periodEndMax != ''">
+            and period_end &lt;= #{periodEndMax}
+        </if>
         order by code, period_end
     </select>
 

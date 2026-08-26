@@ -114,3 +114,21 @@
 | R-20260820-04 | 图表配色（真实数据） | 线上有数据 + 发版后 | 选一只股票出图，检查蜡烛与 KDJ 三线颜色 | 红涨 #E64340 绿跌 #27AE60；K 橙 D 紫 J 蓝，无刺眼感 | 待发版后线上核验 | 待验证 |
 | R-20260820-05 | CSP 兼容与缓存失效 | 线上 Caddy 安全头 | curl -sI 首页与静态资源；浏览器打开页面 | 无外链字体/无内联脚本（script-src 'self' 不拦截）；v=19 版本引用生效，旧缓存不串 | 发版后核验：CSP 头完整、首页 v=19、登录页样式完整渲染（Vue 挂载/CSS 加载正常，视觉核验无裸 HTML） | 通过 |
 | R-20260820-06 | 功能不回归 | 发版后 | 登录/自选星标/查询/列设置/板块设置 | 与改造前行为一致（纯样式改动，JS 仅动色值常量） | ./mvnw test 54/54 通过；待线上抽查 | 通过（代码层） |
+
+## 2026-08-26 补充用例（历史截止查询性能修复 + 单票 series 物化直读 + 同步闸门 2 天）
+
+改动：①全市场扫描历史截止（或 goldInternalMax>50 超窗口）时的兜底从"逐股对 stock_quote 现场聚合"改为按截止上界批读物化表（周/月/季）/批量读原始行聚合（日线）（`loadAnchoredBarsForScan`）；②单票 `/kdj/series` 周/月/季改读物化表全历史（物化未覆盖请求周期时回退实时聚合，日线不变）；③扫描批量装载加 SQL 窗口下界 + 窗口内不足 132 根的股票二次全量批读护栏（长期停牌股）；④`run_daily.sh` 同步闸门 3 天 → 2 天（MIN_SYNC_GAP_DAYS）。
+
+| 编号 | 用例 | 前置 | 步骤 | 预期 | 实测 | 状态 |
+|---|---|---|---|---|---|---|
+| R-20260826-01 | 历史截止批量兜底对拍（月线） | H2：6 股×7000 工作日 + 物化表 | kdjType=2、tradeDate=20201215 的 gold-cross 与 trade-signal | 股票集合/K/D/J/close/crossValue 与全历史基准一致（KDJ 容差 1e-9） | historicalCutoffBatchFallbackMatchesFullHistory 通过 | 通过 |
+| R-20260826-02 | 历史截止批量兜底对拍（周线/日线） | 同上 | kdjType=1 tradeDateMin/Max=20230626/20230630 gold-cross；kdjType=0 tradeDate=20230630 gold-cross | 周线走物化表批量、日线走原始行批量聚合，结果均与全历史基准一致 | 同上测试方法通过 | 通过 |
+| R-20260826-03 | goldInternalMax>50 超窗口批量 | 同上 | kdjType=2、goldInternalMax=60（窗口 142>132）trade-signal | 全部股票按锚定批量重算（无截止=锚最新、无上界），结果与全历史基准一致 | oversizedWindowBatchFallbackMatchesFullHistory 通过 | 通过 |
+| R-20260826-04 | 长期停牌股窗口护栏 | T00007 两段行情（2019~2021 + 2026，周线 161 根>132，132nd-from-last 早于 SQL 下界） | kdjType=1 all-stocks；检查 bars 缓存窗口 | 带下界批读不足 132 根 → 二次全量批读补齐；窗口=132 根且第一根来自停牌前老段；K/D/close 与全历史一致 | suspensionGapStockGetsFullReadGuard 通过 | 通过 |
+| R-20260826-05 | 单票 series 周/月/季物化直读对拍 | 物化表已灌（全历史） | kdjType=1/2/3 各取 2 股（无截止）+ 周截止 20230630/月截止 202006/季截止 2021Q4 | 序列长度、OHLC、K/D/J、交叉标注与"全历史日线聚合 + handler 直算"逐字段一致（含早期数据一根不少） | seriesAggTablePathMatchesDailyAggregation 通过 | 通过 |
+| R-20260826-06 | series 物化滞后回退 | 物化表删 2025-01 之后月线行 | 无截止 kdjType=2 series | isScanDataReady=false → 回退全历史日线聚合，最新周期不丢 | seriesFallsBackWhenAggTableStale 通过 | 通过 |
+| R-20260826-07 | 物化直读 + 窗口下界存量对拍 | 物化表已灌 | kdjType=1/2/3 all-stocks（最新锚定，带下界批读路径） | 结果与全历史基准一致（原有用例回归） | aggTablePathMatchesFullHistory 通过 | 通过 |
+| R-20260826-08 | 自动化测试套件 | 本地构建环境 | ./mvnw test | 全绿（54→59，新增 5 用例） | 59/59 通过 | 通过 |
+| R-20260826-09 | 月线历史截止线上性能 | 发版后服务器 | trade-signal kdjType=2 tradeDate=20230731（旧复现路径 30min+）冷缓存计时；gold-cross 月线历史截止冷计时 | trade-signal 从 >30min 降至约十几秒；同参重试毫秒级（结果缓存） | 待发版后实测回填 | 待验证 |
+| R-20260826-10 | 单票月线 series 线上性能 | 发版后服务器 | /kdj/series?code=600519&kdjType=2（冷缓存） | 从冷 ~8.6s 降至亚秒级；序列含 2001 年首月起全部 299 根 | 待发版后实测回填 | 待验证 |
+| R-20260826-11 | 同步闸门 2 天 | 服务器 run_daily.sh 为新版 | 观察 daily.log：距水位 <2 天跳过、≥2 天执行 | 跳过日志显示"距水位 N 天 < 2 天"；实际约 2~3 天一同步 | 待部署后观察 | 待验证 |

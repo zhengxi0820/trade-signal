@@ -16,7 +16,7 @@
 | 凭据文件（600, root） | `/etc/trade-signal.env`（DB 账号密码 + 访问密钥） |
 | systemd 服务 | `trade-signal.service`（用户 `tradesignal`，Restart=on-failure，`java -Xmx1536m -jar`） |
 | Caddy 配置 | `/etc/caddy/Caddyfile` |
-| 行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每日 00:00** 跑 `run_daily.sh`（探针判断新浪是否有新数据且距水位 ≥3 天，无/不足则跳过；有才执行：新股检测回填 → 2 路并行分片写 `stock_quote_log`（新浪源，实测 5h42m）→ finalize（事件 rescale → 并入主表 → 对账 → 备份 → truncate）→ work_day → 周期物化 → 缓存预热）。日志 `/home/ops/scripts/daily.log` |
+| 行情同步 | cron `/etc/cron.d/trade-signal-daily`，**每日 00:00** 跑 `run_daily.sh`（探针判断新浪是否有新数据且距水位 ≥2 天，无/不足则跳过；有才执行：新股检测回填 → 2 路并行分片写 `stock_quote_log`（新浪源，实测 5h42m）→ finalize（事件 rescale → 并入主表 → 对账 → 备份 → truncate）→ work_day → 周期物化 → 缓存预热）。日志 `/home/ops/scripts/daily.log` |
 | 物化自愈 | cron `/etc/cron.d/trade-signal-period-bar`，**每小时 :25** 跑 `ensure_period_bar.sh`：work_day 最新已完结周期 vs 物化表 max(period_end)，落后则补跑物化；与 run_daily 共用 `.run_daily.lock`（flock -n）防并发 |
 | 重启自动预热 | cron `/etc/cron.d/trade-signal-warm`，**每 10 分钟**跑 `ensure_warm.sh`：比对 systemd `ActiveEnterTimestamp` 与标记文件 `.warm_marker`，应用重启（OOM/异常/手动）后自动触发一次 `warm_cache.sh`（与运行中预热共用 `.warm.lock` 防并发；冷缓存窗口由扫描单飞兜底） |
 | 备份 | `/var/backups/trade-signal/`（**主备份在 finalize 里随同步完成即时执行**；另有 cron `/etc/cron.d/trade-signal-backup` 每周一 03:47 兜底，**只保留最新一份**；cron.d 文件必须 root:root 644，否则被拒跑） |
@@ -66,6 +66,7 @@ nohup /home/ops/scripts/warm_cache.sh > /home/ops/scripts/warm_cache.log 2>&1 &
 
 ## 已完成里程碑
 
+- 2026-08-26 历史截止查询性能修复发版 + 同步闸门放宽：①全市场扫描历史截止切片不足时的兜底从"5533 股逐股对 stock_quote 现场聚合"（月线 trade-signal 截止 2023-07 实测 30min+，期间 MySQL iowait 打满拖慢整站）改为**按截止上界批读物化表（周/月/季）/批读原始行聚合（日线）**，全市场约十几秒；②单票 `/kdj/series` 周/月/季改读物化表全历史（冷 8.6s → 0.1s 量级，数据从上市首月起一根不少，物化未覆盖请求周期时自动回退实时聚合），日线不变；③扫描批读加窗口下界（周线 710 万行读取砍至约百万级），窗口内不足 132 根的股票二次全量批读补齐（防长期停牌股被截断）；④run_daily.sh 三日闸门放宽为**两日**（`MIN_SYNC_GAP_DAYS` 3→2，用户拍板；新浪限流风险随之略增，如遇限流回调 3）。回归：历史截止对拍/停牌股护栏/series 物化对拍等新增用例全绿（详见回归用例库 R-20260826-xx）
 - 2026-08-20 前端苹果风整页改造发版（v19，commit 2780cc0，apple-design-skill 规范落地）：毛玻璃吸顶导航栏 + 黑色胶囊页签、#F5F5F7 画布 + 18px 圆角白卡、透明表头表格、登录页纯白卡片重做、分段控件无底轨蓝底白字（间距 12px）、图表配色 K=#EA7A38/D=#8A51C3/J=#4CA2F7、蜡烛红涨 #E64340 绿跌 #27AE60；Element Plus 主题 CSS 变量桥接 #0066CC；系统字体栈不引外链（CSP 兼容）；纯静态资源无业务逻辑改动。发版验证：公网 200/v19/CSP 头完整/密钥登录 204/series 200/登录页样式完整渲染（R-20260820-05 通过；图表配色 R-04 线上目视）。回滚：`app.jar.bak-20260820`
 - 2026-08-19 安全加固发版（报告 `docs/security-review-20260819.md`，S-01~S-08/S-10/S-11 已修复）：邀请码默认改空（未配置=注册关闭，本机开发需显式 export）；clientIp 改取 XFF 末值（防伪造绕过限流）；限流 Map 容量上限 1 万（防内存耗尽）；`/kdj/series` 强制 code 必填 400（防全表聚合重查询）；cache/refresh 仅密钥登录；token 内嵌签发时间 + 用户 token 服务端吊销检查（禁用/改密即失效，60s 缓存）；登录时延拉平防用户名枚举 + 重名文案去枚举 + 畸形哈希容错 + 密码 UTF-8 ≤72 字节；接入 Dependabot；删除根目录遗留 `ifind_ohlcv_sync.py`（自带偏离权威 schema 的 DDL）。**注意：token 格式变更，发版后所有用户需重新登录**
 - 2026-08-12 重启自动预热：systemd `OnFailure=` 方案实测**不随 `Restart=` 触发**（失败后立即重启不激活 OnFailure），改用 cron 看门狗 `ensure_warm.sh`（每 10 分钟比对启动时间戳 vs 标记文件）；kill 演练验证通过：模拟 OOM → 自动重启 → 10 分钟内自动触发预热（日线冷 514s 后全部命中）。另确认 10:35 发版 jar 已含前端 B 版双图（其他参数双开关 + 单卡双图 + 持久化），无需再发版

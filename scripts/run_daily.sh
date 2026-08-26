@@ -2,13 +2,14 @@
 # run_daily.sh — 行情同步 cron wrapper（/etc/cron.d/trade-signal-daily 调用，每日 00:00）
 # 口径（2026-08-08 起）：行情源唯一新浪；2026-08-11 起 cron 每日 00:00 触发，
 #   探针比对新浪最新交易日 vs 主表水位（max trade_date）：无新数据（非交易日/数据未发布）直接跳过；
-#   另加 3 天闸门（防新浪封 IP，先降频为三日一同步）：最新日期 - 水位 < 3 天也不跑重爬
+#   另加闸门（防新浪封 IP）：最新日期 - 水位 < 2 天也不跑重爬。2026-08-11~08-25 为 3 天（三日一同步），
+#   2026-08-26 起放宽为 2 天（两日一同步，用户拍板；如遇新浪限流可回调 3）
 # 流程（2026-08-10 起，log 表中转 + 2 路并行）：
 #   flock → 探针（无新数据/间隔不足跳过） → 新股维护 → 分片 0/2 ‖ 分片 1/2（都写 stock_quote_log，主表零写入）
 #   → finalize（事件统一执行 → 并入主表 → 对账 → 即时备份 → truncate）
 #   → workday 刷新 → stock_period_bar 周期物化 → warm_cache 预热
 # 物化自愈：/etc/cron.d/trade-signal-period-bar 每小时 ensure_period_bar.sh（与 run_daily 共用锁）
-# 人工手动触发（非常规）：FORCE=1 ./run_daily.sh —— 仅绕过"三日闸门"，探针失败/无新数据仍跳过；
+# 人工手动触发（非常规）：FORCE=1 ./run_daily.sh —— 仅绕过闸门，探针失败/无新数据仍跳过；
 #   常规 cron 不带 FORCE，行为不变。日志会标记"人工手动触发（FORCE=1）"。
 # cron 非交互环境：环境变量在这里显式装配，日志按日期分隔追加
 set -uo pipefail
@@ -47,16 +48,16 @@ if [ -n "$WATERMARK" ] && [ "$PROBE_OUT" -le "$WATERMARK" ]; then
   echo "===== $(date "+%Y-%m-%d %H:%M:%S") 探针最新 $PROBE_OUT ≤ 水位 $WATERMARK，无新数据，跳过 =====" >> daily.log 2>&1
   exit 0
 fi
-MIN_SYNC_GAP_DAYS=3
+MIN_SYNC_GAP_DAYS=2
 if [ -n "$WATERMARK" ]; then
   PROBE_EPOCH=$(date -d "${PROBE_OUT:0:4}-${PROBE_OUT:4:2}-${PROBE_OUT:6:2}" +%s)
   WM_EPOCH=$(date -d "${WATERMARK:0:4}-${WATERMARK:4:2}-${WATERMARK:6:2}" +%s)
   GAP_DAYS=$(( (PROBE_EPOCH - WM_EPOCH) / 86400 ))
   if [ "$GAP_DAYS" -lt "$MIN_SYNC_GAP_DAYS" ]; then
     if [ "${FORCE:-0}" = "1" ]; then
-      echo "===== $(date "+%Y-%m-%d %H:%M:%S") 人工手动触发（FORCE=1），跳过三日闸门（距水位 ${GAP_DAYS} 天） =====" >> daily.log 2>&1
+      echo "===== $(date "+%Y-%m-%d %H:%M:%S") 人工手动触发（FORCE=1），跳过闸门（距水位 ${GAP_DAYS} 天） =====" >> daily.log 2>&1
     else
-      echo "===== $(date "+%Y-%m-%d %H:%M:%S") 距水位 ${GAP_DAYS} 天 < ${MIN_SYNC_GAP_DAYS} 天，跳过（三日一同步，防新浪限流） =====" >> daily.log 2>&1
+      echo "===== $(date "+%Y-%m-%d %H:%M:%S") 距水位 ${GAP_DAYS} 天 < ${MIN_SYNC_GAP_DAYS} 天，跳过（两日一同步，防新浪限流） =====" >> daily.log 2>&1
       exit 0
     fi
   fi

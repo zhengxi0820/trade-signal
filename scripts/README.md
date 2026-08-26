@@ -51,7 +51,7 @@ python -m adjust.workday --reconcile
 python -m fetch.new_stocks --dry-run    # 只检测打印不写库；--simulate CODE 模拟新增分支
 python -m fetch.new_stocks              # 生产执行（幂等，无新增 0 成本）
 
-# 增量（生产，三日一同步 + log 表中转 + 2 路并行）：
+# 增量（生产，两日一同步 + log 表中转 + 2 路并行，2026-08-26 由三日放宽）：
 python -m fetch.daily --shard 0/2    # 分片：写 stock_quote_log + 事件暂存（每线程限流 3s）
 python -m fetch.daily --shard 1/2
 python -m fetch.daily --finalize     # 收尾：事件统一执行+rescale → 并入主表 → 对账 → 备份 → truncate
@@ -67,9 +67,9 @@ python -m aggregate.period_bar --full
 nohup ./rebuild_period_bar.sh > period_bar_full_rebuild.log 2>&1 &
 # 纯函数单元测试（窗口对齐 / 周期桶 / 最大已完结桶，无 pytest 依赖）：
 python tests/test_period_bar.py
-# 服务器由 /etc/cron.d/trade-signal-daily 触发（每日 00:00 探针 + 3 天闸门，防新浪封 IP；wrapper run_daily.sh：
+# 服务器由 /etc/cron.d/trade-signal-daily 触发（每日 00:00 探针 + 2 天闸门（2026-08-26 由 3 天放宽），防新浪封 IP；wrapper run_daily.sh：
 # flock → 探针（无新数据/间隔不足跳过）→ fetch.new_stocks 新股维护 → 分片 0/2 ‖ 1/2 → finalize → adjust.workday
-# → aggregate.period_bar → warm_cache 预热，日志 daily.log；人工强制触发：FORCE=1 ./run_daily.sh（仅绕过三日闸门，非常规）
+# → aggregate.period_bar → warm_cache 预热，日志 daily.log；人工强制触发：FORCE=1 ./run_daily.sh（仅绕过闸门，非常规）
 # 另有每小时 ensure_period_bar.sh 物化自愈（日历种子+对账清理+BEHIND 补物化，与 run_daily 共用锁）、
 # 每 10 分钟 ensure_warm.sh 重启自动预热（应用重启后自动触发 warm_cache，防并发用 .warm.lock）；
 # 注意：warm_cache.sh / ensure_warm.sh 是部署侧脚本，只在服务器 /home/ops/scripts/，不入仓库

@@ -145,7 +145,7 @@ public class KDJServiceImpl implements KDJService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "code 必填（series 为单票序列端点）");
         }
         fillCommonDefaults(kdjParam);
-        List<KDJHandler.PeriodBar> bars = loadPeriodBars(kdjParam, loadDailies(kdjParam));
+        List<KDJHandler.PeriodBar> bars = loadSeriesBars(kdjParam);
         List<KDJHandler.KdjValue> kdjList = kdjHandler.calculate(bars, kdjParam.getN(), kdjParam.getM1(), kdjParam.getM2());
         List<KDJDTO> result = new ArrayList<>(bars.size());
         for (int i = 0; i < bars.size(); i++) {
@@ -297,12 +297,15 @@ public class KDJServiceImpl implements KDJService {
     private List<CrossStockVO> computeAllStocks(KDJParam kdjParam) {
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
+        List<String> codes = targetCodes(kdjParam);
+        Map<String, List<KDJHandler.PeriodBar>> anchored = null;
         if (!StringUtils.hasText(kdjParam.getCode())) {
-            ensureScanBarsLoaded(kdjParam);
+            ensureScanBarsLoaded(kdjParam, codes);
+            anchored = loadAnchoredBarsForScan(kdjParam, SCAN_BASE_BARS, codes);
         }
-        for (String code : targetCodes(kdjParam)) {
+        for (String code : codes) {
             kdjParam.setCode(code);
-            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, SCAN_BASE_BARS);
+            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, SCAN_BASE_BARS, anchored);
             if (bars.isEmpty()) {
                 continue;
             }
@@ -332,12 +335,15 @@ public class KDJServiceImpl implements KDJService {
     private List<CrossStockVO> computeGold(KDJParam kdjParam) {
         Map<String, StockInfoDO> infoMap = stockInfoMap();
         List<CrossStockVO> result = new ArrayList<>();
+        List<String> codes = targetCodes(kdjParam);
+        Map<String, List<KDJHandler.PeriodBar>> anchored = null;
         if (!StringUtils.hasText(kdjParam.getCode())) {
-            ensureScanBarsLoaded(kdjParam);
+            ensureScanBarsLoaded(kdjParam, codes);
+            anchored = loadAnchoredBarsForScan(kdjParam, SCAN_BASE_BARS, codes);
         }
-        for (String code : targetCodes(kdjParam)) {
+        for (String code : codes) {
             kdjParam.setCode(code);
-            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, SCAN_BASE_BARS);
+            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, SCAN_BASE_BARS, anchored);
             if (bars.isEmpty()) {
                 continue;
             }
@@ -363,12 +369,15 @@ public class KDJServiceImpl implements KDJService {
         List<CrossStockVO> result = new ArrayList<>();
         // 交易位需回看上次金叉，窗口 = 间距上限 + 暖机；间距参数可配，窗口随参数放大
         int periodBars = kdjParam.getGoldInternalMax().intValue() + SCAN_BASE_BARS;
+        List<String> codes = targetCodes(kdjParam);
+        Map<String, List<KDJHandler.PeriodBar>> anchored = null;
         if (!StringUtils.hasText(kdjParam.getCode())) {
-            ensureScanBarsLoaded(kdjParam);
+            ensureScanBarsLoaded(kdjParam, codes);
+            anchored = loadAnchoredBarsForScan(kdjParam, periodBars, codes);
         }
-        for (String code : targetCodes(kdjParam)) {
+        for (String code : codes) {
             kdjParam.setCode(code);
-            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, periodBars);
+            List<KDJHandler.PeriodBar> bars = scanBarsFor(kdjParam, periodBars, anchored);
             if (bars.isEmpty()) {
                 continue;
             }
@@ -389,10 +398,12 @@ public class KDJServiceImpl implements KDJService {
     /**
      * 全市场扫描的周期K线获取：优先走 ScanBarsCache（按最新周期锚定的 132 根窗口，
      * key = code|adjust|kdjType），再按截止周期切前缀；截止太早导致前缀不足以覆盖
-     * 暖机+回看，或所需窗口超过缓存窗口（goldInternalMax > 50）时，按截止周期锚定
-     * 重算且不写缓存。
+     * 暖机+回看，或所需窗口超过缓存窗口（goldInternalMax > 50）时，优先取
+     * anchoredBars（全市场批量的截止锚定窗口，见 loadAnchoredBarsForScan），
+     * 未提供时按截止锚定逐股重算（单票请求或物化表未启用的过渡期）。
      */
-    private List<KDJHandler.PeriodBar> scanBarsFor(KDJParam kdjParam, int periodBars) {
+    private List<KDJHandler.PeriodBar> scanBarsFor(KDJParam kdjParam, int periodBars,
+                                                   Map<String, List<KDJHandler.PeriodBar>> anchoredBars) {
         if (periodBars <= SCAN_CACHE_WINDOW) {
             String key = ScanBarsCache.key(kdjParam.getCode(), kdjParam.getAdjust(), kdjParam.getKdjType());
             List<KDJHandler.PeriodBar> window = scanBarsCache.get(key);
@@ -402,26 +413,127 @@ public class KDJServiceImpl implements KDJService {
             }
             List<KDJHandler.PeriodBar> sliced = truncateAtEndPeriod(window, kdjParam);
             // window 未满 = 该股全历史都在窗口内（新股），切前缀即全历史截断，直接用；
-            // 否则要求切片覆盖 暖机+回看 才走缓存，不足则按截止锚定重算
+            // 否则要求切片覆盖 暖机+回看 才走缓存，不足则落到截止锚定重算
             if (sliced.size() >= periodBars || window.size() < SCAN_CACHE_WINDOW) {
                 return sliced;
             }
+        }
+        List<KDJHandler.PeriodBar> anchored = anchoredBars == null ? null : anchoredBars.get(kdjParam.getCode());
+        if (anchored != null) {
+            // 批量截止锚定窗口：SQL 已按 period_end ∈ [下界, 截止周期末] 过滤，语义同下行逐股路径
+            return anchored;
         }
         return truncateAtEndPeriod(loadScanBars(kdjParam, periodBars, scanAnchor(kdjParam)), kdjParam);
     }
 
     /**
-     * 全市场扫描前的批量装载：找出 bars 缓存未命中的股票，每 200 只一批查库写入缓存。
-     * 周/月/季线读物化表 stock_period_bar（未启用时退回逐股 SQL 现场聚合，仅过渡期）；
-     * 日线批量读窗口原始行（原始行即 bar）。云盘随机 IO 是冷算瓶颈，批量顺序读可省约 90% 耗时。
+     * 全市场扫描历史截止（或 goldInternalMax > 50 的超窗口回看）时的兜底批量装载：
+     * 找出 132 根窗口前缀不足以覆盖 暖机+回看 的股票，按截止锚点批量重算——
+     * 周/月/季读物化表（period_end ∈ [下界, 截止周期末]），日线批量读原始行后 Java 聚合。
+     * 每 200 只一条 SQL。取代旧"逐股对 stock_quote 现场聚合"（冷库 ~700ms/股 × 全市场单线程，
+     * 2026-08-26 前月线历史截止 30min+ 的根因）。不写 bars 缓存（窗口锚点与最新锚定不同）。
+     *
+     * @return 截止锚定 bars（key=code）；无需兜底返回 null
      */
-    private void ensureScanBarsLoaded(KDJParam kdjParam) {
+    private Map<String, List<KDJHandler.PeriodBar>> loadAnchoredBarsForScan(KDJParam kdjParam, int periodBars,
+                                                                            List<String> codes) {
+        if (StringUtils.hasText(kdjParam.getCode())) {
+            return null; // 单票请求由 scanBarsFor 逐股路径处理
+        }
+        List<String> missing = new ArrayList<>();
+        if (periodBars > SCAN_CACHE_WINDOW) {
+            // 窗口需求超过缓存宽度：全部股票都按锚定重算（无截止参数时锚在最新）
+            missing.addAll(codes);
+        } else {
+            String endInclusive = endInclusiveOf(kdjParam);
+            for (String code : codes) {
+                List<KDJHandler.PeriodBar> window = scanBarsCache.get(
+                        ScanBarsCache.key(code, kdjParam.getAdjust(), kdjParam.getKdjType()));
+                if (window == null) {
+                    continue; // 窗口未装载（不应发生），scanBarsFor 逐股兜底
+                }
+                if (window.size() >= SCAN_CACHE_WINDOW
+                        && countBarsWithin(window, endInclusive) < periodBars) {
+                    missing.add(code);
+                }
+            }
+        }
+        if (missing.isEmpty()) {
+            return null;
+        }
+        LocalDate anchor = scanAnchor(kdjParam);
+        String endInclusive = endInclusiveOf(kdjParam);
+        String boundMin = anchor
+                .minusDays((long) (periodBars + 2) * daysPerBar(kdjParam.getKdjType()))
+                .format(DateTimeFormatter.BASIC_ISO_DATE);
+        boolean useAggTable = !"0".equals(kdjParam.getKdjType()) && aggTableAvailable();
+        Map<String, List<KDJHandler.PeriodBar>> result = new LinkedHashMap<>();
+        for (int i = 0; i < missing.size(); i += SCAN_BATCH_SIZE) {
+            List<String> chunk = missing.subList(i, Math.min(i + SCAN_BATCH_SIZE, missing.size()));
+            if (useAggTable) {
+                // 周/月/季：按截止上界 + 下界批读物化表（周为 period_type='1'，与 kdjType 一致）
+                Map<String, List<PeriodBarDO>> byCode = periodBarMapper
+                        .queryBatch(kdjParam.getKdjType(), chunk, kdjParam.getAdjust(), boundMin, endInclusive)
+                        .stream().collect(Collectors.groupingBy(PeriodBarDO::getCode,
+                                LinkedHashMap::new, Collectors.toList()));
+                for (String code : chunk) {
+                    result.put(code, toBars(byCode.getOrDefault(code, List.of())));
+                }
+            } else if ("0".equals(kdjParam.getKdjType())) {
+                // 日线：批量窗口原始行 → Java 聚合（原始行即 bar）
+                Map<String, List<StockQuoteDO>> byCode = stockQuoteMapper
+                        .queryWindowBatch(chunk, kdjParam.getAdjust(), boundMin, endInclusive)
+                        .stream().collect(Collectors.groupingBy(StockQuoteDO::getCode,
+                                LinkedHashMap::new, Collectors.toList()));
+                for (String code : chunk) {
+                    result.put(code, kdjHandler.aggregate(
+                            byCode.getOrDefault(code, List.of()), "0", asOfDate(), null));
+                }
+            }
+            // 其余（物化表未启用的过渡期周/月/季）：不批量，scanBarsFor 逐股现场聚合兜底
+        }
+        return result;
+    }
+
+    /** 窗口 bars 中 endDate ≤ endInclusive 的根数（endInclusive 为 null 即全部） */
+    private static int countBarsWithin(List<KDJHandler.PeriodBar> bars, String endInclusive) {
+        if (endInclusive == null) {
+            return bars.size();
+        }
+        int n = 0;
+        for (KDJHandler.PeriodBar bar : bars) {
+            if (bar.endDate.compareTo(endInclusive) <= 0) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** 周期 bar 折算日历天的粗略系数（窗口下界换算用，宁可宽几根，精确截断在 Java 侧完成） */
+    private static int daysPerBar(String kdjType) {
+        switch (kdjType) {
+            case "1": return 8;
+            case "2": return 32;
+            case "3": return 100;
+            default: return 3;
+        }
+    }
+
+    /**
+     * 全市场扫描前的批量装载：找出 bars 缓存未命中的股票，每 200 只一批查库写入缓存。
+     * 周/月/季线读物化表 stock_period_bar（SQL 带窗口下界砍读取量——周线全历史 710 万行，
+     * 132 根窗口只需约百万行；**窗口内行数不足 132 根的股票二次全量批读补齐**：新股全历史
+     * 本就在窗口内、长期停牌股的窗口 bars 可能够到下界之前，lastN 必须与全历史一致）；
+     * 未启用时退回逐股 SQL 现场聚合（仅过渡期）；日线批量读窗口原始行（原始行即 bar）。
+     * 云盘随机 IO 是冷算瓶颈，批量顺序读可省约 90% 耗时。
+     */
+    private void ensureScanBarsLoaded(KDJParam kdjParam, List<String> codes) {
         String adjust = kdjParam.getAdjust();
         String kdjType = kdjParam.getKdjType();
         String originCode = kdjParam.getCode();
         try {
             List<String> missing = new ArrayList<>();
-            for (String code : targetCodes(kdjParam)) {
+            for (String code : codes) {
                 if (scanBarsCache.get(ScanBarsCache.key(code, adjust, kdjType)) == null) {
                     missing.add(code);
                 }
@@ -432,18 +544,41 @@ public class KDJServiceImpl implements KDJService {
             boolean monthlyOrQuarterly = "2".equals(kdjType) || "3".equals(kdjType);
             // 周/月/季都优先读物化表（周 period_type='1' 与 kdjType 一致）；日线原始行即 bar 不入表
             boolean useAggTable = !"0".equals(kdjType) && aggTableAvailable();
-            for (int i = 0; i < missing.size(); i += SCAN_BATCH_SIZE) {
-                List<String> chunk = missing.subList(i, Math.min(i + SCAN_BATCH_SIZE, missing.size()));
-                if (useAggTable) {
-                    // 周/月/季：读物化表（周为 period_type='1'，与 kdjType 一致）
-                    Map<String, List<PeriodBarDO>> byCode = periodBarMapper.queryBatch(kdjType, chunk, adjust)
+            if (useAggTable) {
+                // 第一遍：带窗口下界批读（窗口内的行足够 lastN(132) 时结果与全历史完全一致）
+                String windowMin = scanWindowLowerBound(kdjType);
+                List<String> deficient = new ArrayList<>();
+                for (int i = 0; i < missing.size(); i += SCAN_BATCH_SIZE) {
+                    List<String> chunk = missing.subList(i, Math.min(i + SCAN_BATCH_SIZE, missing.size()));
+                    Map<String, List<PeriodBarDO>> byCode = periodBarMapper.queryBatch(kdjType, chunk, adjust, windowMin, null)
+                            .stream().collect(Collectors.groupingBy(PeriodBarDO::getCode,
+                                    LinkedHashMap::new, Collectors.toList()));
+                    for (String code : chunk) {
+                        List<KDJHandler.PeriodBar> bars = toBars(byCode.getOrDefault(code, List.of()));
+                        if (bars.size() < SCAN_CACHE_WINDOW) {
+                            deficient.add(code);
+                        } else {
+                            scanBarsCache.put(ScanBarsCache.key(code, adjust, kdjType),
+                                    lastN(bars, SCAN_CACHE_WINDOW));
+                        }
+                    }
+                }
+                // 第二遍：窗口内不足 132 根的股票全量批读（新股全历史行数少、停牌股要够到下界之前）
+                for (int i = 0; i < deficient.size(); i += SCAN_BATCH_SIZE) {
+                    List<String> chunk = deficient.subList(i, Math.min(i + SCAN_BATCH_SIZE, deficient.size()));
+                    Map<String, List<PeriodBarDO>> byCode = periodBarMapper.queryBatch(kdjType, chunk, adjust, null, null)
                             .stream().collect(Collectors.groupingBy(PeriodBarDO::getCode,
                                     LinkedHashMap::new, Collectors.toList()));
                     for (String code : chunk) {
                         scanBarsCache.put(ScanBarsCache.key(code, adjust, kdjType),
                                 lastN(toBars(byCode.getOrDefault(code, List.of())), SCAN_CACHE_WINDOW));
                     }
-                } else if (monthlyOrQuarterly) {
+                }
+                return;
+            }
+            for (int i = 0; i < missing.size(); i += SCAN_BATCH_SIZE) {
+                List<String> chunk = missing.subList(i, Math.min(i + SCAN_BATCH_SIZE, missing.size()));
+                if (monthlyOrQuarterly) {
                     // 物化表未启用（首次物化前）：退回逐股 SQL 现场聚合（慢但正确，仅过渡期）
                     for (String code : chunk) {
                         kdjParam.setCode(code);
@@ -453,12 +588,12 @@ public class KDJServiceImpl implements KDJService {
                     }
                 } else {
                     // 日/周线：批量窗口原始行 → Java 聚合
-                    int daysPerBar = "1".equals(kdjType) ? 8 : 3;
+                    int days = daysPerBar(kdjType);
                     String tradeDateMin = LocalDate.now()
-                            .minusDays((long) SCAN_CACHE_WINDOW * daysPerBar)
+                            .minusDays((long) SCAN_CACHE_WINDOW * days)
                             .format(DateTimeFormatter.BASIC_ISO_DATE);
                     Map<String, List<StockQuoteDO>> byCode = stockQuoteMapper
-                            .queryWindowBatch(chunk, adjust, tradeDateMin)
+                            .queryWindowBatch(chunk, adjust, tradeDateMin, null)
                             .stream().collect(Collectors.groupingBy(StockQuoteDO::getCode,
                                     LinkedHashMap::new, Collectors.toList()));
                     for (String code : chunk) {
@@ -474,19 +609,64 @@ public class KDJServiceImpl implements KDJService {
         }
     }
 
+    /**
+     * 最新锚定 132 根窗口的 SQL 下界（宽松回推 +8 周期：下界从"今天"起算，而窗口从
+     * "最新 bar"起算，两者差着 同步延迟+周期未完结 的滞后，周线最长可达数周；
+     * 滞后超预期只会让更多股票走二次全量批读（正确性不变、性能退化），宁可松）。
+     * 精确窗口宽度由 Java 侧 lastN 保证；窗口内行数不足的股票由二次全量批读兜底。
+     */
+    private static String scanWindowLowerBound(String kdjType) {
+        switch (kdjType) {
+            case "1":
+                return LocalDate.now().minusWeeks(SCAN_CACHE_WINDOW + 8L)
+                        .format(DateTimeFormatter.BASIC_ISO_DATE);
+            case "2":
+                return YearMonth.now().minusMonths(SCAN_CACHE_WINDOW + 8L)
+                        .format(DateTimeFormatter.ofPattern("yyyyMM")) + "01";
+            case "3":
+                return YearMonth.now().minusMonths((SCAN_CACHE_WINDOW + 8L) * 3L)
+                        .format(DateTimeFormatter.ofPattern("yyyyMM")) + "01";
+            default:
+                return LocalDate.now().minusDays((long) SCAN_CACHE_WINDOW * 3 + 7)
+                        .format(DateTimeFormatter.BASIC_ISO_DATE);
+        }
+    }
+
     /** 物化表是否已启用（首次物化前为 0，周/月/季扫描退回现场聚合兜底）。小表计数，毫秒级。 */
     private boolean aggTableAvailable() {
         return periodBarMapper.countAll() > 0;
     }
 
-    /** 单股最新窗口 bars：周/月/季优先读物化表，否则走原窗口加载。 */
+    /**
+     * 单股最新窗口 bars：周/月/季优先读物化表（带窗口下界；窗口内不足 132 根时全量重读，
+     * 保证 lastN 与全历史一致），否则走原窗口加载。
+     */
     private List<KDJHandler.PeriodBar> loadLatestWindowBars(KDJParam kdjParam) {
         String kdjType = kdjParam.getKdjType();
         if (!"0".equals(kdjType) && aggTableAvailable()) {
-            return lastN(toBars(periodBarMapper.queryByCode(kdjType, kdjParam.getCode(), kdjParam.getAdjust())),
-                    SCAN_CACHE_WINDOW);
+            List<KDJHandler.PeriodBar> bars = toBars(periodBarMapper.queryByCode(
+                    kdjType, kdjParam.getCode(), kdjParam.getAdjust(), scanWindowLowerBound(kdjType)));
+            if (bars.size() < SCAN_CACHE_WINDOW) {
+                bars = toBars(periodBarMapper.queryByCode(
+                        kdjType, kdjParam.getCode(), kdjParam.getAdjust(), null));
+            }
+            return lastN(bars, SCAN_CACHE_WINDOW);
         }
         return loadScanBars(kdjParam, SCAN_CACHE_WINDOW, LocalDate.now());
+    }
+
+    /**
+     * 单票序列（/kdj/series）取数：周/月/季直读物化表全历史（含早期数据，一根不少；
+     * 口径 = KDJHandler.aggregate，对拍保证），物化未覆盖请求截止周期时（isScanDataReady）
+     * 回退全历史日线实时聚合；日线恒走原始行直读 + Java 聚合（不读物化表）。
+     */
+    private List<KDJHandler.PeriodBar> loadSeriesBars(KDJParam kdjParam) {
+        String kdjType = kdjParam.getKdjType();
+        if (!"0".equals(kdjType) && aggTableAvailable() && isScanDataReady(kdjParam)) {
+            return truncateAtEndPeriod(toBars(periodBarMapper.queryByCode(
+                    kdjType, kdjParam.getCode(), kdjParam.getAdjust(), null)), kdjParam);
+        }
+        return loadPeriodBars(kdjParam, loadDailies(kdjParam));
     }
 
     private static List<KDJHandler.PeriodBar> toBars(List<PeriodBarDO> rows) {
@@ -654,27 +834,7 @@ public class KDJServiceImpl implements KDJService {
      * 按入参的截止周期截断序列；未指定时保留全部（聚合已剔除未完结周期）。
      */
     private List<KDJHandler.PeriodBar> truncateAtEndPeriod(List<KDJHandler.PeriodBar> bars, KDJParam kdjParam) {
-        String kdjType = kdjParam.getKdjType();
-        String endInclusive = null;
-        switch (kdjType) {
-            case "1":
-                endInclusive = kdjParam.getTradeDateMax();
-                break;
-            case "2":
-                if (StringUtils.hasText(kdjParam.getTradeDate())) {
-                    endInclusive = kdjParam.getTradeDate().substring(0, 6) + "31";
-                }
-                break;
-            case "3":
-                if (StringUtils.hasText(kdjParam.getTradeDateMax())) {
-                    // 季度末月 yyyymm -> 该月最后一天
-                    endInclusive = kdjParam.getTradeDateMax() + "31";
-                }
-                break;
-            default:
-                endInclusive = kdjParam.getTradeDate();
-                break;
-        }
+        String endInclusive = endInclusiveOf(kdjParam);
         if (!StringUtils.hasText(endInclusive)) {
             return bars;
         }
@@ -685,6 +845,27 @@ public class KDJServiceImpl implements KDJService {
             }
         }
         return truncated;
+    }
+
+    /**
+     * 请求的有效截止周期末（含，yyyymmdd 字符串比较序）；未指定截止返回 null。
+     * 与 truncateAtEndPeriod / 扫描兜底批读的 period_end 上界同一套入参规则：
+     * 周=tradeDateMax；月=tradeDate 截位到月拼 31；季=tradeDateMax(末月 yyyymm) 拼 31；日=tradeDate。
+     */
+    private static String endInclusiveOf(KDJParam kdjParam) {
+        switch (kdjParam.getKdjType()) {
+            case "1":
+                return kdjParam.getTradeDateMax();
+            case "2":
+                return StringUtils.hasText(kdjParam.getTradeDate())
+                        ? kdjParam.getTradeDate().substring(0, 6) + "31" : null;
+            case "3":
+                // 季度末月 yyyymm -> 该月最后一天
+                return StringUtils.hasText(kdjParam.getTradeDateMax())
+                        ? kdjParam.getTradeDateMax() + "31" : null;
+            default:
+                return kdjParam.getTradeDate();
+        }
     }
 
     private CrossStockVO buildCrossStockVO(List<KDJHandler.PeriodBar> bars, List<KDJHandler.KdjValue> kdjList,

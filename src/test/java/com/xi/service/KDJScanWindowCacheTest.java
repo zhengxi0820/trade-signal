@@ -260,8 +260,9 @@ class KDJScanWindowCacheTest {
             query.setCode(code);
             query.setAdjust("1");
             List<StockQuoteDO> full = stockQuoteMapper.queryAll(query);
-            List<KDJHandler.PeriodBar> bars = handler.aggregate(full, kdjType,
+            List<KDJHandler.PeriodBar> allBars = handler.aggregate(full, kdjType,
                     LocalDate.parse(DATA_END, FMT), fixtureCalendar(kdjType));
+            List<KDJHandler.PeriodBar> bars = allBars;
             if (endInclusive != null) {
                 bars = bars.stream().filter(b -> b.endDate.compareTo(endInclusive) <= 0)
                         .collect(Collectors.toList());
@@ -291,6 +292,7 @@ class KDJScanWindowCacheTest {
             vo.setCode(code);
             KDJHandler.PeriodBar lastBar = bars.get(bars.size() - 1);
             vo.setClose(lastBar.close);
+            vo.setNextClose(referenceNextClose(allBars, kdjType, endInclusive));
             vo.setK(kdj.get(last).k);
             vo.setD(kdj.get(last).d);
             vo.setJ(kdj.get(last).j);
@@ -300,6 +302,41 @@ class KDJScanWindowCacheTest {
             result.put(code, vo);
         }
         return result;
+    }
+
+    /**
+     * nextClose 基准（复刻 service 严格下一期口径）：截止后第一根 bar，且其期末
+     * 不超过日历上下一期的期末；无截止参数 / 无下一期 / 跳期（整期停牌）返回 null。
+     */
+    private BigDecimal referenceNextClose(List<KDJHandler.PeriodBar> allBars, String kdjType, String endInclusive) {
+        if (endInclusive == null) {
+            return null;
+        }
+        KDJHandler.PeriodBar next = null;
+        for (KDJHandler.PeriodBar bar : allBars) {
+            if (bar.endDate.compareTo(endInclusive) > 0) {
+                next = bar;
+                break;
+            }
+        }
+        if (next == null) {
+            return null;
+        }
+        // 日历上一期期末（lastDayByKey 插入序 = 时间序，期末逐期递增）
+        String nextEnd = null;
+        boolean cutoffFound = false;
+        for (Map.Entry<String, String> e : fixtureCalendar(kdjType).lastDayByKey.entrySet()) {
+            if (e.getValue().compareTo(endInclusive) <= 0) {
+                cutoffFound = true;
+            } else if (cutoffFound) {
+                nextEnd = e.getValue();
+                break;
+            }
+        }
+        if (nextEnd == null || next.endDate.compareTo(nextEnd) > 0) {
+            return null;
+        }
+        return next.close;
     }
 
     /**
@@ -500,6 +537,49 @@ class KDJScanWindowCacheTest {
         }
     }
 
+    /**
+     * 「仅看涨」严格下一期口径：截止周 2026-07-10（周五），下一周 07-13~07-17 整期停牌
+     * （无 bar），再下一周 07-20 起复牌——第一根 bar 已跳过下一期，nextClose 必须为 null
+     * （复牌周收盘价不算"下一周期收盘价"）；同期未停牌股正常填充下一周 close。
+     */
+    @Test
+    void nextCloseNullWhenNextPeriodFullySuspended() {
+        String suspended = "T00003";
+        jdbc.update("delete from stock_quote where code = ? and trade_date between '20260713' and '20260717'",
+                suspended);
+        KDJParam weekly = new KDJParam();
+        weekly.setKdjType("1");
+        weekly.setTradeDateMin("20260706");
+        weekly.setTradeDateMax("20260710");
+        List<CrossStockVO> actual = kdjService.getAllStocks(weekly);
+        assertTrue(actual.size() >= CODES.length, "全部股票都应出现在 all-stocks 结果中");
+        for (CrossStockVO vo : actual) {
+            if (suspended.equals(vo.getCode())) {
+                assertNull(vo.getNextClose(), "下一期整期停牌（跳期）的股 nextClose 应为 null，即使复牌周上涨");
+            } else {
+                KDJHandler.PeriodBar next = weeklyBar(vo.getCode(), "20260713", "20260717");
+                assertNotNull(next, vo.getCode() + " 下一周 bar 应存在");
+                assertNotNull(vo.getNextClose(), vo.getCode() + " 正常股 nextClose 应填充");
+                assertEquals(0, next.close.compareTo(vo.getNextClose()),
+                        vo.getCode() + " nextClose 应等于下一周收盘价");
+            }
+        }
+    }
+
+    /** 该股指定起止日期的周 bar（从全历史聚合中查找），无则返回 null。 */
+    private KDJHandler.PeriodBar weeklyBar(String code, String start, String end) {
+        StockQuoteQuery query = new StockQuoteQuery();
+        query.setCode(code);
+        query.setAdjust("1");
+        for (KDJHandler.PeriodBar bar : handler.aggregate(stockQuoteMapper.queryAll(query), "1",
+                LocalDate.parse(DATA_END, FMT), fixtureCalendar("1"))) {
+            if (start.equals(bar.startDate) && end.equals(bar.endDate)) {
+                return bar;
+            }
+        }
+        return null;
+    }
+
     /** 两段行情：2019-01~2021-06（约 130 根周线）+ 2026-01~2026-07（约 31 根周线）。 */
     private void seedGapDailies(String code) {
         List<Object[]> batch = new ArrayList<>();
@@ -678,6 +758,7 @@ class KDJScanWindowCacheTest {
             assertBigDecimalClose(x.getD(), a.getD(), label + " " + e.getKey() + " D");
             assertBigDecimalClose(x.getJ(), a.getJ(), label + " " + e.getKey() + " J");
             assertBigDecimalEquals(x.getClose(), a.getClose(), label + " " + e.getKey() + " close");
+            assertBigDecimalEquals(x.getNextClose(), a.getNextClose(), label + " " + e.getKey() + " nextClose");
             assertBigDecimalClose(x.getCrossValue(), a.getCrossValue(), label + " " + e.getKey() + " crossValue");
         }
     }

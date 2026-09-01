@@ -77,6 +77,12 @@ createApp({
       showLatestChart: localStorage.getItem('ts_show_latest_chart') !== '0',
       // 有未应用的查询条件修改（点「查询」才发请求）
       queryDirty: false,
+      // 已点过至少一次查询（控制空态文案：未查询时引导点击查询）
+      queried: false,
+      // 「仅看涨」勾选（两面板各自独立，纯前端过滤，不进查询参数）：
+      // 只留下一周期收盘价 > 截止周期收盘价的股票（出参 nextClose，历史截止场景可用）
+      goldBullOnly: false,
+      signalBullOnly: false,
 
       kdjType: '0',
 
@@ -173,10 +179,10 @@ createApp({
     visibleGoldCols() {
       return this.allColumns.filter(c => this.goldCols.includes(c.prop));
     },
-    // 页签 + 筛选后的三个列表视图
+    // 页签 + 筛选后的三个列表视图（金叉/交易位额外叠加「仅看涨」勾选过滤）
     viewAllStockList() { return this._boardFilter(this._favFilter(this.allStockList)); },
-    viewGoldCrossList() { return this._boardFilter(this._favFilter(this.goldCrossList)); },
-    viewTradeSignalList() { return this._boardFilter(this._favFilter(this.tradeSignalList)); },
+    viewGoldCrossList() { return this._bullFilter(this._boardFilter(this._favFilter(this.goldCrossList)), this.goldBullOnly); },
+    viewTradeSignalList() { return this._bullFilter(this._boardFilter(this._favFilter(this.tradeSignalList)), this.signalBullOnly); },
     // 板块设置：全选 = 不过滤（含 boardType 为空的股票）
     boardAllOn() {
       return this.boardFilter.length === 5;
@@ -261,7 +267,9 @@ createApp({
       this.authed = false;
     }
     if (this.authed) {
-      this.initPeriods();
+      // 查询触发制：进门只初始化周期选择器，列表等用户点「查询」（亮橙点提示）
+      this.initPeriods(true);
+      this.queryDirty = true;
     }
   },
   methods: {
@@ -359,8 +367,10 @@ createApp({
       this.authKey = '';
       this.loginForm = { username: '', password: '' };
       this.registerForm = { username: '', password: '', inviteCode: '' };
-      this.initPeriods();
+      // 查询触发制：登录后只初始化周期选择器 + 拉自选股，扫描列表等用户点「查询」
+      this.initPeriods(true);
       this.loadFavs();
+      this.queryDirty = true;
     },
 
     // ---- 自选股（服务端按用户存储，GET/POST /watchlist）----
@@ -374,6 +384,13 @@ createApp({
     _boardFilter(list) {
       if (this.boardFilter.length === 5) return list;
       return list.filter(s => this.boardFilter.includes(s.boardType));
+    },
+    // 「仅看涨」过滤（勾选且非最新截止时生效）：下一周期收盘价 > 截止周期收盘价；
+    // nextClose 为 null = 下一期停牌或无下一期，视为不涨排除。截止切回最新周期时勾选框
+    // 隐藏，此处 isLatestPeriod 兜底保证过滤失效
+    _bullFilter(list, on) {
+      if (!on || this.isLatestPeriod) return list;
+      return list.filter(s => s.nextClose != null && s.nextClose > s.close);
     },
     toggleBoardAll() {
       this.boardFilter = this.boardAllOn ? [] : ['0', '1', '2', '3', '4'];
@@ -494,6 +511,7 @@ createApp({
       const q = this.buildQuery().toString();
       this.querying = true;
       this.queryDirty = false;
+      this.queried = true;
       this.allPage = 1;
       this.loadingAll = this.loadingGold = this.loadingSignal = true;
       const fill = (url, key, loadingKey) =>

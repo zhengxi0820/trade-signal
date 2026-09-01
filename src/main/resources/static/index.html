@@ -218,7 +218,7 @@
       </div>
     </template>
     <el-table ref="allTable" :data="pagedAllStockList" size="small" highlight-current-row
-              height="420"
+              height="420" :empty-text="queried ? '暂无数据' : '点击「查询」加载数据'"
               @current-change="row => onSelect(row, 'all')"
               :row-class-name="() => 'clickable-row'">
       <el-table-column width="46" align="center">
@@ -247,20 +247,25 @@
       <template #header>
         <div class="card-head">
           <span>金叉股票（{{ viewGoldCrossList.length }}）</span>
-          <el-popover placement="bottom-end" :width="160" trigger="click">
-            <template #reference>
-              <el-button size="small" text icon="Operation">列设置</el-button>
-            </template>
-            <div class="col-checks">
-              <label v-for="c in otherColumns" :key="c.prop" class="board-opt-label">
-                <input type="checkbox" :value="c.prop" v-model="goldCols">{{ c.label }}
-              </label>
-            </div>
-          </el-popover>
+          <div class="head-tools">
+            <label v-if="!isLatestPeriod" class="bull-check">
+              <input type="checkbox" v-model="goldBullOnly">仅看涨
+            </label>
+            <el-popover placement="bottom-end" :width="160" trigger="click">
+              <template #reference>
+                <el-button size="small" text icon="Operation">列设置</el-button>
+              </template>
+              <div class="col-checks">
+                <label v-for="c in otherColumns" :key="c.prop" class="board-opt-label">
+                  <input type="checkbox" :value="c.prop" v-model="goldCols">{{ c.label }}
+                </label>
+              </div>
+            </el-popover>
+          </div>
         </div>
       </template>
       <el-table ref="goldTable" :data="viewGoldCrossList" size="small" highlight-current-row
-                height="300"
+                height="300" :empty-text="queried ? '暂无数据' : '点击「查询」加载数据'"
                 @current-change="row => onSelect(row, 'gold')"
                 :row-class-name="() => 'clickable-row'">
       <el-table-column width="46" align="center">
@@ -284,20 +289,25 @@
       <template #header>
         <div class="card-head">
           <span>交易位股票（{{ viewTradeSignalList.length }}）</span>
-          <el-popover placement="bottom-end" :width="160" trigger="click">
-            <template #reference>
-              <el-button size="small" text icon="Operation">列设置</el-button>
-            </template>
-            <div class="col-checks">
-              <label v-for="c in otherColumns" :key="c.prop" class="board-opt-label">
-                <input type="checkbox" :value="c.prop" v-model="signalCols">{{ c.label }}
-              </label>
-            </div>
-          </el-popover>
+          <div class="head-tools">
+            <label v-if="!isLatestPeriod" class="bull-check">
+              <input type="checkbox" v-model="signalBullOnly">仅看涨
+            </label>
+            <el-popover placement="bottom-end" :width="160" trigger="click">
+              <template #reference>
+                <el-button size="small" text icon="Operation">列设置</el-button>
+              </template>
+              <div class="col-checks">
+                <label v-for="c in otherColumns" :key="c.prop" class="board-opt-label">
+                  <input type="checkbox" :value="c.prop" v-model="signalCols">{{ c.label }}
+                </label>
+              </div>
+            </el-popover>
+          </div>
         </div>
       </template>
       <el-table ref="signalTable" :data="viewTradeSignalList" size="small" highlight-current-row
-                height="300"
+                height="300" :empty-text="queried ? '暂无数据' : '点击「查询」加载数据'"
                 @current-change="row => onSelect(row, 'signal')"
                 :row-class-name="() => 'clickable-row'">
       <el-table-column width="46" align="center">

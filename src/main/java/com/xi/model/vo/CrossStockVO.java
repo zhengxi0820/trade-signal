@@ -73,6 +73,13 @@ public class CrossStockVO {
     private BigDecimal crossValue;
 
     /**
+     * 下一周期收盘价：全局日历上截止周期的下一期该股收盘价（与查询同复权口径）。
+     * null 条件：截止即最新周期；下一期未完结/未物化；下一期整期停牌（第一根 bar
+     * 跳到更后面的周期时不算下一期）。
+     */
+    private BigDecimal nextClose;
+
+    /**
      * 交易日期（日度、月度使用）yyyymmdd
      */
     private String tradeDate;

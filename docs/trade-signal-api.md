@@ -100,6 +100,7 @@ GET /kdj/gold-cross
 | open / high / low / close | BigDecimal | 截止周期开 / 高 / 低 / 收 |
 | k / d / j | BigDecimal | 截止周期 K、D、J 值 |
 | crossValue | BigDecimal | 截止周期金叉交汇点数值 |
+| nextClose | BigDecimal | 下一周期收盘价：全局日历上截止周期的**下一期**该股收盘价（与查询同复权口径，取该期已完结 bar）。null 条件：截止即最新周期；下一期未完结/未物化；该股下一期整期停牌（第一根 bar 跳到更后面的周期时不算下一期，置 null） |
 | tradeDate | String | 日/月度：截止周期日期 |
 | tradeDateMin / tradeDateMax | String | 周/季度：截止周期范围（规则同上） |
 

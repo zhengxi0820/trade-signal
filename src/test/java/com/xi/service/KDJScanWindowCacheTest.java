@@ -236,6 +236,109 @@ class KDJScanWindowCacheTest {
         assertNotSame(before, kdjService.getGold(p5), "手动清空后应重算");
     }
 
+    /**
+     * 五个信号限制项开关：开关参与结果缓存 key（开/关不串缓存），关闭后结果与
+     * 「基准直算 + 对应开关关闭」一致；currGoldCrossMaxEnabled 同时放行 all-stocks 的金叉标注。
+     */
+    @Test
+    void limitSwitchesGetDistinctCacheEntriesAndMatchReference() {
+        // trade-signal：默认（开关不传 = 全部生效）
+        KDJParam on = new KDJParam();
+        on.setKdjType("0");
+        List<CrossStockVO> onFirst = kdjService.getTradeSignalStockList(on);
+        KDJParam onAgain = new KDJParam();
+        onAgain.setKdjType("0");
+        assertSame(onFirst, kdjService.getTradeSignalStockList(onAgain), "同参数应命中同一缓存");
+
+        // 关闭金叉最大间距：不同缓存条目，结果与基准直算（关同款开关）一致
+        KDJParam off = new KDJParam();
+        off.setKdjType("0");
+        off.setGoldInternalMaxEnabled("0");
+        List<CrossStockVO> offResult = kdjService.getTradeSignalStockList(off);
+        assertNotSame(onFirst, offResult, "开关不同的请求不得共享缓存条目");
+        KDJParam offAgain = new KDJParam();
+        offAgain.setKdjType("0");
+        offAgain.setGoldInternalMaxEnabled("0");
+        assertSame(offResult, kdjService.getTradeSignalStockList(offAgain), "同开关参数应命中同一缓存");
+        KDJParam offParams = tradeSignalDefaults();
+        offParams.setGoldInternalMaxEnabled("0");
+        assertSameContent(referenceScan("0", ReferenceMode.TRADE, null, offParams), offResult,
+                "trade-signal 关金叉最大间距");
+        assertTrue(offResult.size() >= onFirst.size(), "关闭间距上限不应减少结果");
+
+        // all-stocks：当前金叉上限开关关闭后，金叉标注不再受上限过滤
+        KDJParam allOn = new KDJParam();
+        allOn.setKdjType("0");
+        allOn.setCurrGoldCrossMax(new BigDecimal("1"));
+        List<CrossStockVO> allOnResult = kdjService.getAllStocks(allOn);
+
+        KDJParam allOff = new KDJParam();
+        allOff.setKdjType("0");
+        allOff.setCurrGoldCrossMax(new BigDecimal("1"));
+        allOff.setCurrGoldCrossMaxEnabled("0");
+        List<CrossStockVO> allOffResult = kdjService.getAllStocks(allOff);
+        assertNotSame(allOnResult, allOffResult, "all-stocks 开关不同的请求不得共享缓存");
+        assertSameContent(referenceScan("0", ReferenceMode.ALL, null), allOffResult,
+                "all-stocks 关当前金叉上限");
+        assertTrue(allOffResult.stream().anyMatch(v -> v.getCrossValue() != null
+                        && v.getCrossValue().compareTo(BigDecimal.ONE) > 0),
+                "前置：应存在交汇点>1 的金叉股，否则上限=1 无区分度");
+    }
+
+    /**
+     * series 端点：currGoldCrossMaxEnabled="0" 时金叉标注不再受上限过滤，
+     * 与完全不传 currGoldCrossMax 等价；开关生效（不传）时超限金叉被降级为死叉/无标注。
+     */
+    @Test
+    void seriesCurrGoldCrossMaxSwitchMatchesUnlimited() {
+        int degraded = 0;
+        for (String code : CODES) {
+            KDJParam off = seriesParam(code);
+            off.setCurrGoldCrossMax(new BigDecimal("1"));
+            off.setCurrGoldCrossMaxEnabled("0");
+            List<KDJDTO> offResult = kdjService.getAllKDJ(off);
+
+            KDJParam unlimited = seriesParam(code);
+            List<KDJDTO> none = kdjService.getAllKDJ(unlimited);
+            assertEquals(none.size(), offResult.size(), code + " 序列长度");
+            for (int i = 0; i < none.size(); i++) {
+                assertEquals(none.get(i).getCrossType(), offResult.get(i).getCrossType(),
+                        code + " 下标" + i + " 关开关应等价于不限");
+                assertEquals(0, compareNullable(none.get(i).getCrossValue(), offResult.get(i).getCrossValue()),
+                        code + " 下标" + i + " crossValue");
+            }
+
+            KDJParam on = seriesParam(code);
+            on.setCurrGoldCrossMax(new BigDecimal("1"));
+            List<KDJDTO> onResult = kdjService.getAllKDJ(on);
+            for (int i = 0; i < onResult.size(); i++) {
+                KDJDTO gold = offResult.get(i);
+                if ("gold".equals(gold.getCrossType())
+                        && gold.getCrossValue().compareTo(BigDecimal.ONE) > 0) {
+                    degraded++;
+                    assertTrue(!"gold".equals(onResult.get(i).getCrossType()),
+                            code + " 上限=1 生效时超限金叉应被降级（下标 " + i + "）");
+                }
+            }
+        }
+        assertTrue(degraded > 0, "前置：应存在交汇点>1 的金叉标注，否则上限=1 无区分度");
+    }
+
+    private KDJParam seriesParam(String code) {
+        KDJParam p = new KDJParam();
+        p.setCode(code);
+        p.setKdjType("0");
+        p.setAdjust("1");
+        return p;
+    }
+
+    private int compareNullable(BigDecimal a, BigDecimal b) {
+        if (a == null || b == null) {
+            return a == b ? 0 : 1;
+        }
+        return a.compareTo(b);
+    }
+
     // ---------- 基准：全历史直算（不经过 service 的窗口与缓存） ----------
 
     private enum ReferenceMode {GOLD, TRADE, ALL}

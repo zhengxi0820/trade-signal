@@ -92,4 +92,29 @@ public class KDJParam {
      */
     private String goldCrossLimit;
 
+    /**
+     * 开关：上次金叉交汇上限是否生效，"1"=开（默认）、"0"=关（不限制）
+     */
+    private String lastGoldCrossMaxEnabled;
+
+    /**
+     * 开关：当前金叉交汇上限是否生效，"1"=开（默认）、"0"=关（不限，各端点语义一致）
+     */
+    private String currGoldCrossMaxEnabled;
+
+    /**
+     * 开关：死叉交汇上限是否生效，"1"=开（默认）、"0"=关（仅停用交汇点上限，"恰好一次死叉"结构条件仍生效）
+     */
+    private String lastDeathCrossMaxEnabled;
+
+    /**
+     * 开关：金叉最小间距是否生效，"1"=开（默认）、"0"=关（不设下限；回看窗口仍按 goldInternalMax 计算）
+     */
+    private String goldInternalMinEnabled;
+
+    /**
+     * 开关：金叉最大间距是否生效，"1"=开（默认）、"0"=关（不设上限；回看窗口仍按本值计算）
+     */
+    private String goldInternalMaxEnabled;
+
 }

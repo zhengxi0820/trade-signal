@@ -135,10 +135,10 @@ public CrossPoint calcKdCrossValue(BigDecimal preK, BigDecimal preD, BigDecimal 
 
 | # | 条件 | 参数 | 默认值 |
 |---|---|---|---|
-| 1 | x 的 crossValue ≤ 上次金叉上限 | lastGoldCrossMax | 20 |
-| 2 | y 的 crossValue ≤ 当前金叉上限 | currGoldCrossMax | 50 |
-| 3 | x、y 的下标差 ∈ [最小间距, 最大间距]，**闭区间** | goldInternalMin / goldInternalMax | 5 / 15 |
-| 4 | x、y 之间恰好一次死叉，且死叉 crossValue ≤ 上限 | lastDeathCrossMax | 50 |
+| 1 | x 的 crossValue ≤ 上次金叉上限（可开关） | lastGoldCrossMax / lastGoldCrossMaxEnabled | 20 / "1" |
+| 2 | y 的 crossValue ≤ 当前金叉上限（可开关） | currGoldCrossMax / currGoldCrossMaxEnabled | 50 / "1" |
+| 3 | x、y 的下标差 ∈ [最小间距, 最大间距]，**闭区间**（min/max 可分别开关） | goldInternalMin / goldInternalMax + goldInternalMinEnabled / goldInternalMaxEnabled | 5 / 15 / "1" / "1" |
+| 4 | x、y 之间恰好一次死叉，且死叉 crossValue ≤ 上限（仅上限可开关） | lastDeathCrossMax / lastDeathCrossMaxEnabled | 50 / "1" |
 | 5 | y 周期收盘价 < x 周期收盘价（开关） | openClosePriceLimit | "1"（开） |
 | 6 | y 的 crossValue > x 的 crossValue（开关） | goldCrossLimit | "1"（开） |
 
@@ -147,6 +147,7 @@ public CrossPoint calcKdCrossValue(BigDecimal preK, BigDecimal preD, BigDecimal 
 - 条件 1、2 的「KD 的值」统一指**交汇点 crossValue**。
 - 条件 3 的间距按**对应周期 K 线根数的下标差**计量（非自然日）。例：x 在下标 1，y 合法范围为下标 [6, 16]。
 - 条件 5、6 为字符串开关，"1" = 启用，"0" = 禁用，默认均启用。
+- 条件 1~4 的数值限制均可分别用对应 `xxxEnabled` 开关停用（"1" = 生效默认 / "0" = 该项不参与过滤，未传等同 "1"）。条件 4 开关只停用交汇点上限，「恰好一次死叉」结构条件恒生效；条件 3 开关只影响过滤，回看窗口仍按 goldInternalMax 数值计算；currGoldCrossMaxEnabled="0" 同时停用展示类端点（series / gold-cross / all-stocks）的金叉交汇上限过滤。
 - 条件 1、2 仅交易位计算使用；currGoldCrossMax（3.3）在展示类端点缺省不限。
 - 条件 5 的收盘价比较以各自周期最后一个交易日的收盘价为准。
 

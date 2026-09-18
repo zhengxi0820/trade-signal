@@ -266,6 +266,95 @@ class KDJHandlerTest {
         assertTrue(core.isTradeSignal(bars, kdj, off));
     }
 
+    // ---------- 四个数值限制的开关（"0"=停用该项限制） ----------
+    // 基础序列：y=下标10金叉（crossValue>1）、x=下标4金叉（crossValue≈11.36）、间距6、
+    // 中间恰一次死叉（crossValue≈13.43）、y收盘90 < x收盘100 → 默认参数下为交易位
+
+    @Test
+    void tradeSignalCurrGoldCrossMaxSwitch() {
+        List<KDJHandler.KdjValue> kdj = List.of(
+                kdj(8, 10), kdj(9, 10), kdj(9, 11), kdj(5, 15), kdj(12, 11),
+                kdj(14, 12), kdj(16, 13), kdj(10, 14), kdj(12, 13), kdj(12, 14),
+                kdj(20, 15));
+        List<KDJHandler.PeriodBar> bars = barsWithCloses(100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 90);
+        // 上限1 < y交汇点 → 拦；开关停用 → 通过
+        KDJParam on = tradeSignalParam();
+        on.setCurrGoldCrossMax(bd("1"));
+        assertFalse(core.isTradeSignal(bars, kdj, on));
+        KDJParam off = tradeSignalParam();
+        off.setCurrGoldCrossMax(bd("1"));
+        off.setCurrGoldCrossMaxEnabled("0");
+        assertTrue(core.isTradeSignal(bars, kdj, off));
+    }
+
+    @Test
+    void tradeSignalLastGoldCrossMaxSwitch() {
+        List<KDJHandler.KdjValue> kdj = List.of(
+                kdj(8, 10), kdj(9, 10), kdj(9, 11), kdj(5, 15), kdj(12, 11),
+                kdj(14, 12), kdj(16, 13), kdj(10, 14), kdj(12, 13), kdj(12, 14),
+                kdj(20, 15));
+        List<KDJHandler.PeriodBar> bars = barsWithCloses(100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 90);
+        // 上限10 < x交汇点≈11.36 → 拦；开关停用 → 通过
+        KDJParam on = tradeSignalParam();
+        on.setLastGoldCrossMax(bd("10"));
+        assertFalse(core.isTradeSignal(bars, kdj, on));
+        KDJParam off = tradeSignalParam();
+        off.setLastGoldCrossMax(bd("10"));
+        off.setLastGoldCrossMaxEnabled("0");
+        assertTrue(core.isTradeSignal(bars, kdj, off));
+    }
+
+    @Test
+    void tradeSignalDeathCrossMaxSwitch() {
+        List<KDJHandler.KdjValue> kdj = List.of(
+                kdj(8, 10), kdj(9, 10), kdj(9, 11), kdj(5, 15), kdj(12, 11),
+                kdj(14, 12), kdj(16, 13), kdj(10, 14), kdj(12, 13), kdj(12, 14),
+                kdj(20, 15));
+        List<KDJHandler.PeriodBar> bars = barsWithCloses(100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 90);
+        // 上限10 < 死叉交汇点≈13.43 → 拦；开关停用 → 通过（"恰好一次死叉"结构条件仍生效）
+        KDJParam on = tradeSignalParam();
+        on.setLastDeathCrossMax(bd("10"));
+        assertFalse(core.isTradeSignal(bars, kdj, on));
+        KDJParam off = tradeSignalParam();
+        off.setLastDeathCrossMax(bd("10"));
+        off.setLastDeathCrossMaxEnabled("0");
+        assertTrue(core.isTradeSignal(bars, kdj, off));
+    }
+
+    @Test
+    void tradeSignalGoldInternalMinSwitch() {
+        List<KDJHandler.KdjValue> kdj = List.of(
+                kdj(8, 10), kdj(9, 10), kdj(9, 11), kdj(5, 15), kdj(12, 11),
+                kdj(14, 12), kdj(16, 13), kdj(10, 14), kdj(12, 13), kdj(12, 14),
+                kdj(20, 15));
+        List<KDJHandler.PeriodBar> bars = barsWithCloses(100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 90);
+        // 间距=6 < min=7 → 拦；开关停用（不设下限）→ 通过
+        KDJParam on = tradeSignalParam();
+        on.setGoldInternalMin(bd("7"));
+        assertFalse(core.isTradeSignal(bars, kdj, on));
+        KDJParam off = tradeSignalParam();
+        off.setGoldInternalMin(bd("7"));
+        off.setGoldInternalMinEnabled("0");
+        assertTrue(core.isTradeSignal(bars, kdj, off));
+    }
+
+    @Test
+    void tradeSignalGoldInternalMaxSwitch() {
+        List<KDJHandler.KdjValue> kdj = List.of(
+                kdj(8, 10), kdj(9, 10), kdj(9, 11), kdj(5, 15), kdj(12, 11),
+                kdj(14, 12), kdj(16, 13), kdj(10, 14), kdj(12, 13), kdj(12, 14),
+                kdj(20, 15));
+        List<KDJHandler.PeriodBar> bars = barsWithCloses(100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 90);
+        // 间距=6 > max=5 → 拦；开关停用（不设上限）→ 通过
+        KDJParam on = tradeSignalParam();
+        on.setGoldInternalMax(bd("5"));
+        assertFalse(core.isTradeSignal(bars, kdj, on));
+        KDJParam off = tradeSignalParam();
+        off.setGoldInternalMax(bd("5"));
+        off.setGoldInternalMaxEnabled("0");
+        assertTrue(core.isTradeSignal(bars, kdj, off));
+    }
+
     // ---------- helpers ----------
 
     private StockQuoteDO daily(String tradeDate, double high, double low, double close) {

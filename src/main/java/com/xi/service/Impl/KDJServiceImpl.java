@@ -163,7 +163,7 @@ public class KDJServiceImpl implements KDJService {
                     bar, kdjParam.getKdjType());
             KDJHandler.CrossPoint gold = kdjHandler.goldenCrossAt(kdjList, i);
             KDJHandler.CrossPoint death = kdjHandler.deathCrossAt(kdjList, i);
-            if (gold != null && withinCurrGoldCrossMax(gold, kdjParam.getCurrGoldCrossMax())) {
+            if (gold != null && withinCurrGoldCrossMax(gold, kdjParam)) {
                 dto.setCrossType("gold");
                 dto.setCrossValue(gold.crossValue);
             } else if (death != null) {
@@ -318,7 +318,7 @@ public class KDJServiceImpl implements KDJService {
             KDJHandler.CrossPoint cross = null;
             KDJHandler.CrossPoint gold = kdjHandler.goldenCrossAt(kdjList, last);
             KDJHandler.CrossPoint death = kdjHandler.deathCrossAt(kdjList, last);
-            if (gold != null && withinCurrGoldCrossMax(gold, kdjParam.getCurrGoldCrossMax())) {
+            if (gold != null && withinCurrGoldCrossMax(gold, kdjParam)) {
                 cross = gold;
             } else if (death != null) {
                 cross = death;
@@ -355,7 +355,7 @@ public class KDJServiceImpl implements KDJService {
             }
             List<KDJHandler.KdjValue> kdjList = kdjHandler.calculate(bars, kdjParam.getN(), kdjParam.getM1(), kdjParam.getM2());
             KDJHandler.CrossPoint gold = kdjHandler.goldenCrossAt(kdjList, kdjList.size() - 1);
-            if (gold != null && withinCurrGoldCrossMax(gold, kdjParam.getCurrGoldCrossMax())) {
+            if (gold != null && withinCurrGoldCrossMax(gold, kdjParam)) {
                 result.add(buildCrossStockVO(bars, kdjList, gold, kdjParam, infoMap.get(code), scan.nextBar()));
             }
         }
@@ -830,7 +830,10 @@ public class KDJServiceImpl implements KDJService {
                 str(p.getN()), str(p.getM1()), str(p.getM2()),
                 str(p.getLastGoldCrossMax()), str(p.getCurrGoldCrossMax()), str(p.getLastDeathCrossMax()),
                 str(p.getGoldInternalMin()), str(p.getGoldInternalMax()),
-                str(p.getOpenClosePriceLimit()), str(p.getGoldCrossLimit()));
+                str(p.getOpenClosePriceLimit()), str(p.getGoldCrossLimit()),
+                str(p.getLastGoldCrossMaxEnabled()), str(p.getCurrGoldCrossMaxEnabled()),
+                str(p.getLastDeathCrossMaxEnabled()), str(p.getGoldInternalMinEnabled()),
+                str(p.getGoldInternalMaxEnabled()));
     }
 
     private static String str(Object value) {
@@ -1001,8 +1004,12 @@ public class KDJServiceImpl implements KDJService {
                 .collect(Collectors.toMap(StockInfoDO::getCode, Function.identity(), (a, b) -> a));
     }
 
-    private boolean withinCurrGoldCrossMax(KDJHandler.CrossPoint gold, BigDecimal currGoldCrossMax) {
-        return currGoldCrossMax == null || gold.crossValue.compareTo(currGoldCrossMax) <= 0;
+    private boolean withinCurrGoldCrossMax(KDJHandler.CrossPoint gold, KDJParam kdjParam) {
+        // 开关 "0"=不限制当前金叉交汇上限；上限值为 null 同样视为不限
+        if ("0".equals(kdjParam.getCurrGoldCrossMaxEnabled()) || kdjParam.getCurrGoldCrossMax() == null) {
+            return true;
+        }
+        return gold.crossValue.compareTo(kdjParam.getCurrGoldCrossMax()) <= 0;
     }
 
     private void fillCommonDefaults(KDJParam kdjParam) {
@@ -1032,6 +1039,11 @@ public class KDJServiceImpl implements KDJService {
         requireEnum("kdjType", p.getKdjType(), KDJ_TYPE_VALUES);
         requireEnum("openClosePriceLimit", p.getOpenClosePriceLimit(), SWITCH_VALUES);
         requireEnum("goldCrossLimit", p.getGoldCrossLimit(), SWITCH_VALUES);
+        requireEnum("lastGoldCrossMaxEnabled", p.getLastGoldCrossMaxEnabled(), SWITCH_VALUES);
+        requireEnum("currGoldCrossMaxEnabled", p.getCurrGoldCrossMaxEnabled(), SWITCH_VALUES);
+        requireEnum("lastDeathCrossMaxEnabled", p.getLastDeathCrossMaxEnabled(), SWITCH_VALUES);
+        requireEnum("goldInternalMinEnabled", p.getGoldInternalMinEnabled(), SWITCH_VALUES);
+        requireEnum("goldInternalMaxEnabled", p.getGoldInternalMaxEnabled(), SWITCH_VALUES);
         requirePattern("code", p.getCode(), CODE_PATTERN);
         requirePattern("market", p.getMarket(), MARKET_PATTERN);
         requirePattern("tradeDate", p.getTradeDate(), DATE_PATTERN);
@@ -1084,6 +1096,21 @@ public class KDJServiceImpl implements KDJService {
         }
         if (!StringUtils.hasText(kdjParam.getGoldCrossLimit())) {
             kdjParam.setGoldCrossLimit(SWITCH_ON);
+        }
+        if (!StringUtils.hasText(kdjParam.getLastGoldCrossMaxEnabled())) {
+            kdjParam.setLastGoldCrossMaxEnabled(SWITCH_ON);
+        }
+        if (!StringUtils.hasText(kdjParam.getCurrGoldCrossMaxEnabled())) {
+            kdjParam.setCurrGoldCrossMaxEnabled(SWITCH_ON);
+        }
+        if (!StringUtils.hasText(kdjParam.getLastDeathCrossMaxEnabled())) {
+            kdjParam.setLastDeathCrossMaxEnabled(SWITCH_ON);
+        }
+        if (!StringUtils.hasText(kdjParam.getGoldInternalMinEnabled())) {
+            kdjParam.setGoldInternalMinEnabled(SWITCH_ON);
+        }
+        if (!StringUtils.hasText(kdjParam.getGoldInternalMaxEnabled())) {
+            kdjParam.setGoldInternalMaxEnabled(SWITCH_ON);
         }
     }
 }

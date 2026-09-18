@@ -59,6 +59,11 @@
 | goldInternalMax | BigDecimal | 否 | 15 | 两次金叉最大间距（闭区间，仅 trade-signal 生效） |
 | openClosePriceLimit | String | 否 | "1" | 开关：要求本次金叉周期收盘价低于上次金叉（仅 trade-signal 生效） |
 | goldCrossLimit | String | 否 | "1" | 开关：要求本次金叉交汇点高于上次金叉（仅 trade-signal 生效） |
+| lastGoldCrossMaxEnabled | String | 否 | "1" | 开关：上次金叉交汇上限是否生效，"0"=该限制不参与过滤（仅 trade-signal 判断） |
+| currGoldCrossMaxEnabled | String | 否 | "1" | 开关：当前金叉交汇上限是否生效，"0"=不限制（四个端点语义一致：trade-signal 判断 + series / gold-cross / all-stocks 的金叉标注过滤） |
+| lastDeathCrossMaxEnabled | String | 否 | "1" | 开关：死叉交汇上限是否生效，"0"=不限制（仅停用交汇点上限，「x、y 之间恰好一次死叉」结构条件仍生效；仅 trade-signal 生效） |
+| goldInternalMinEnabled | String | 否 | "1" | 开关：金叉最小间距是否生效，"0"=不设下限（仅 trade-signal 判断；回看窗口仍按 goldInternalMax 计算） |
+| goldInternalMaxEnabled | String | 否 | "1" | 开关：金叉最大间距是否生效，"0"=不设上限（仅 trade-signal 判断；回看窗口仍按 goldInternalMax 数值计算，bars 缓存可用性不受影响） |
 
 ## GET /kdj/series
 
@@ -165,4 +170,4 @@ GET /kdj/periods?kdjType=1&market=SH
 
 - 周期物化表落后于请求截止周期时，gold-cross / trade-signal / all-stocks 三个端点的响应带 `X-Data-Not-Ready: 1` 响应头（物化自愈中，前端提示"数据未就绪，稍后刷新"；数据内容此时为上一周期结果）。**不区分是否全市场请求——指定单票 code 的周/月/季请求同样可能带此头**。日线（kdjType=0）恒就绪不带。
 - 全市场扫描（code 为空）走两层内存缓存：结果层（接口+全部参数为 key，命中毫秒级；**同 key 并发未命中单飞共享一次计算**，防冷缓存并发风暴）+ bars 层（每股票每周期 132 根窗口 K 线，key 不含 n/m1/m2）。取数：周/月/季线读周期物化表 `stock_period_bar`（scripts 物化，未启用时月/季退回现场聚合、周线退回批量原始行聚合），日线批量窗口读原始行；全市场扫描按 200 只/批装载（SQL 带窗口下界）。因此：调阈值/间距/开关等过滤参数毫秒级；调 n/m1/m2 只重递推不取数（秒级）；调 adjust 或回看超出窗口的截止周期触发重载——**历史截止切片不足时按截止锚定批读物化表（周/月/季）或批读原始行聚合（日线），全市场约十几秒，不再逐股查询**（2026-08-26 前 5533 股逐股聚合曾致月线历史截止 30min+）。新行情入库后按 `max(trade_date)` 水位自动失效。信号判定均与全历史计算一致（H2 对拍保证）；单票 `/kdj/series` 的周/月/季自 2026-08-26 起同样读物化表（**全历史、无窗口**，含早期数据；物化未覆盖请求截止周期时自动回退全历史日线实时聚合，结果口径一致），日线仍直读原始行全历史实时计算。
-- `currGoldCrossMax` 传 0 就是字面 0（等于过滤掉几乎所有信号），无特殊语义；想"不限"，series / gold-cross / all-stocks 不传即可，trade-signal 传一个足够大的值。
+- `currGoldCrossMax` 传 0 就是字面 0（等于过滤掉几乎所有信号），无特殊语义；想"不限"，series / gold-cross / all-stocks 不传即可，trade-signal 传一个足够大的值或 `currGoldCrossMaxEnabled=0`。五个数值限制项（上次/当前金叉交汇上限、死叉交汇上限、间距 min/max）在 trade-signal 均可用对应 `xxxEnabled=0` 单独停用（开关不传="1" 生效，老调用方行为不变）；开关参与结果缓存 key。

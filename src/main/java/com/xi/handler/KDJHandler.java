@@ -269,6 +269,8 @@ public class KDJHandler {
     /**
      * 交易位判断。金叉必须发生在截止周期（序列最后一根），
      * 再按需求4.2的六条规则逐条过滤。param须已填充默认值。
+     * 四个数值限制（上次/当前金叉交汇上限、死叉交汇上限、间距区间）可分别开关停用：
+     * 开关 "0"=该项不参与过滤，非 "0"（含未传）=生效。
      *
      * @param bars 周期K线序列（时间升序，最后一根=截止周期）
      * @param kdj  与bars等长的KDJ序列
@@ -281,8 +283,9 @@ public class KDJHandler {
         if (yCross == null) {
             return false;
         }
-        // 条件2：当前金叉交汇点 ≤ currGoldCrossMax
-        if (yCross.crossValue.compareTo(param.getCurrGoldCrossMax()) > 0) {
+        // 条件2（可开关）：当前金叉交汇点 ≤ currGoldCrossMax
+        if (switchOn(param.getCurrGoldCrossMaxEnabled())
+                && yCross.crossValue.compareTo(param.getCurrGoldCrossMax()) > 0) {
             return false;
         }
         // 上一次金叉x
@@ -299,16 +302,20 @@ public class KDJHandler {
         if (x < 0) {
             return false;
         }
-        // 条件1：上次金叉交汇点 ≤ lastGoldCrossMax
-        if (xCross.crossValue.compareTo(param.getLastGoldCrossMax()) > 0) {
+        // 条件1（可开关）：上次金叉交汇点 ≤ lastGoldCrossMax
+        if (switchOn(param.getLastGoldCrossMaxEnabled())
+                && xCross.crossValue.compareTo(param.getLastGoldCrossMax()) > 0) {
             return false;
         }
-        // 条件3：间距闭区间 [goldInternalMin, goldInternalMax]
+        // 条件3（可开关）：间距闭区间 [goldInternalMin, goldInternalMax]，min/max 独立开关
         BigDecimal gap = BigDecimal.valueOf(y - x);
-        if (gap.compareTo(param.getGoldInternalMin()) < 0 || gap.compareTo(param.getGoldInternalMax()) > 0) {
+        if (switchOn(param.getGoldInternalMinEnabled()) && gap.compareTo(param.getGoldInternalMin()) < 0) {
             return false;
         }
-        // 条件4：x、y之间恰好一次死叉，且其交汇点 ≤ lastDeathCrossMax
+        if (switchOn(param.getGoldInternalMaxEnabled()) && gap.compareTo(param.getGoldInternalMax()) > 0) {
+            return false;
+        }
+        // 条件4（交汇上限可开关）：x、y之间恰好一次死叉，且其交汇点 ≤ lastDeathCrossMax
         int deathCount = 0;
         CrossPoint deathCross = null;
         for (int i = x + 1; i < y; i++) {
@@ -318,7 +325,9 @@ public class KDJHandler {
                 deathCross = cp;
             }
         }
-        if (deathCount != 1 || deathCross.crossValue.compareTo(param.getLastDeathCrossMax()) > 0) {
+        if (deathCount != 1
+                || (switchOn(param.getLastDeathCrossMaxEnabled())
+                        && deathCross.crossValue.compareTo(param.getLastDeathCrossMax()) > 0)) {
             return false;
         }
         // 条件5（开关）：y周期收盘价 < x周期收盘价
@@ -332,6 +341,11 @@ public class KDJHandler {
             return false;
         }
         return true;
+    }
+
+    /** 开关语义："0"=关，其余（含未传 null）=开，防御未走默认值填充的直接调用。 */
+    private static boolean switchOn(String value) {
+        return !"0".equals(value);
     }
 
     /** 周期桶 key：周=该周周一 yyyymmdd、月=yyyymm、季=yyyyQn、日=yyyymmdd。 */

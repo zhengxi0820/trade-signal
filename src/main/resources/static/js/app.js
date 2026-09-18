@@ -42,8 +42,72 @@ async function getJson(url, onHeaders) {
     return resp.json();
   }
 
+// ---- localStorage 持久化（刷新/重开浏览器均保留，清浏览器缓存才恢复默认） ----
+
+// 参数面板默认值（与后端默认一致）
+const DEFAULT_PARAMS = {
+  n: 9, m1: 3, m2: 3,
+  lastGoldCrossMax: 20,
+  currGoldCrossMax: 50,
+  lastDeathCrossMax: 50,
+  goldInternalMin: 5,
+  goldInternalMax: 15,
+  lastGoldCrossMaxEnabled: true,
+  currGoldCrossMaxEnabled: true,
+  lastDeathCrossMaxEnabled: true,
+  goldInternalMinEnabled: true,
+  goldInternalMaxEnabled: true,
+  openClosePriceLimit: true,
+  goldCrossLimit: true,
+  adjust: '1'
+};
+const NUM_PARAM_KEYS = ['n', 'm1', 'm2', 'lastGoldCrossMax', 'currGoldCrossMax',
+  'lastDeathCrossMax', 'goldInternalMin', 'goldInternalMax'];
+const BOOL_PARAM_KEYS = ['lastGoldCrossMaxEnabled', 'currGoldCrossMaxEnabled',
+  'lastDeathCrossMaxEnabled', 'goldInternalMinEnabled', 'goldInternalMaxEnabled',
+  'openClosePriceLimit', 'goldCrossLimit'];
+
+// 读取查询参数面板记忆：逐字段类型校验（防脏数据/旧结构），不合法字段回落默认值
+function loadPersistedParams() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ts_query_params') || 'null');
+    if (!saved || saved.v !== 1) return {};
+    const out = {};
+    NUM_PARAM_KEYS.forEach(k => {
+      const v = saved[k];
+      if (typeof v === 'number' && isFinite(v) && v > 0) out[k] = v;
+    });
+    BOOL_PARAM_KEYS.forEach(k => {
+      if (typeof saved[k] === 'boolean') out[k] = saved[k];
+    });
+    if (['0', '1', '2'].includes(saved.adjust)) out.adjust = saved.adjust;
+    return out;
+  } catch (e) {
+    return {};
+  }
+}
+
+// 读取纯前端状态记忆（仅看涨/列设置/板块筛选，均不进查询参数）
+function loadPersistedUiState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ts_ui_state') || 'null');
+    if (!saved || saved.v !== 1) return {};
+    const out = {};
+    if (typeof saved.goldBullOnly === 'boolean') out.goldBullOnly = saved.goldBullOnly;
+    if (typeof saved.signalBullOnly === 'boolean') out.signalBullOnly = saved.signalBullOnly;
+    ['goldCols', 'signalCols', 'boardFilter'].forEach(k => {
+      if (Array.isArray(saved[k])) out[k] = saved[k];
+    });
+    return out;
+  } catch (e) {
+    return {};
+  }
+}
+
 createApp({
   data() {
+    // 纯前端状态记忆恢复（仅看涨/列设置/板块筛选）
+    const uiState = loadPersistedUiState();
     return {
       // 认证状态：默认未认证（遮罩盖住整页），/auth/check 通过后才进入
       authed: false,
@@ -61,8 +125,8 @@ createApp({
       page: 'all',
       favs: [],
       searchKw: '',
-      // 板块设置（纯前端过滤，不传后端）：默认全选 = 不过滤
-      boardFilter: ['0', '1', '2', '3', '4'],
+      // 板块设置（纯前端过滤，不传后端）：默认全选 = 不过滤；localStorage 记忆
+      boardFilter: uiState.boardFilter || ['0', '1', '2', '3', '4'],
       boardOptions: [
         { value: '0', label: '上交所主板' },
         { value: '1', label: '科创板' },
@@ -80,9 +144,9 @@ createApp({
       // 已点过至少一次查询（控制空态文案：未查询时引导点击查询）
       queried: false,
       // 「仅看涨」勾选（两面板各自独立，纯前端过滤，不进查询参数）：
-      // 只留下一周期收盘价 > 截止周期收盘价的股票（出参 nextClose，历史截止场景可用）
-      goldBullOnly: false,
-      signalBullOnly: false,
+      // 只留下一周期收盘价 > 截止周期收盘价的股票（出参 nextClose，历史截止场景可用）；localStorage 记忆
+      goldBullOnly: uiState.goldBullOnly || false,
+      signalBullOnly: uiState.signalBullOnly || false,
 
       kdjType: '0',
 
@@ -96,17 +160,8 @@ createApp({
 
       paramOpen: false,
       querying: false,
-      params: {
-        n: 9, m1: 3, m2: 3,
-        lastGoldCrossMax: 20,
-        currGoldCrossMax: 50,
-        lastDeathCrossMax: 50,
-        goldInternalMin: 5,
-        goldInternalMax: 15,
-        openClosePriceLimit: true,
-        goldCrossLimit: true,
-        adjust: '1'
-      },
+      // 查询参数面板：默认值 + localStorage 记忆合并（改了即存，刷新/重开浏览器保留）
+      params: { ...DEFAULT_PARAMS, ...loadPersistedParams() },
 
       allColumns: [
         { prop: 'code',       label: '代码',   width: 90,  minWidth: 80 },
@@ -120,8 +175,8 @@ createApp({
         { prop: 'j',          label: 'J',      width: 70,  minWidth: 100, fmt: true },
         { prop: 'crossValue', label: '交汇点', width: 150, minWidth: 150, fmt: true }
       ],
-      goldCols: ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
-      signalCols: ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
+      goldCols: uiState.goldCols || ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
+      signalCols: uiState.signalCols || ['code', 'name', 'close', 'open', 'high', 'low', 'k', 'd', 'j', 'crossValue'],
 
       allStockList: [],
       goldCrossList: [],
@@ -242,7 +297,13 @@ createApp({
     weekValue() { if (!this._suppressDirty) this.queryDirty = true; },
     monthValue() { if (!this._suppressDirty) this.queryDirty = true; },
     quarter() { if (!this._suppressDirty) this.queryDirty = true; },
-    params: { deep: true, handler() { if (!this._suppressDirty) this.queryDirty = true; } },
+    params: { deep: true, handler() { this.persistQueryParams(); if (!this._suppressDirty) this.queryDirty = true; } },
+    // 纯前端状态（仅看涨/列设置/板块筛选）记忆：变更即存
+    goldBullOnly() { this.persistUiState(); },
+    signalBullOnly() { this.persistUiState(); },
+    goldCols: { deep: true, handler() { this.persistUiState(); } },
+    signalCols: { deep: true, handler() { this.persistUiState(); } },
+    boardFilter: { deep: true, handler() { this.persistUiState(); } },
     quarterYear() {
       // 切换年份后，当前季度不可选时回退到该年最新可选季度
       const set = this.quarterMap[this.quarterYear];
@@ -486,6 +547,11 @@ createApp({
       p.set('lastDeathCrossMax', pms.lastDeathCrossMax);
       p.set('goldInternalMin', pms.goldInternalMin);
       p.set('goldInternalMax', pms.goldInternalMax);
+      p.set('lastGoldCrossMaxEnabled', pms.lastGoldCrossMaxEnabled ? '1' : '0');
+      p.set('currGoldCrossMaxEnabled', pms.currGoldCrossMaxEnabled ? '1' : '0');
+      p.set('lastDeathCrossMaxEnabled', pms.lastDeathCrossMaxEnabled ? '1' : '0');
+      p.set('goldInternalMinEnabled', pms.goldInternalMinEnabled ? '1' : '0');
+      p.set('goldInternalMaxEnabled', pms.goldInternalMaxEnabled ? '1' : '0');
       p.set('openClosePriceLimit', pms.openClosePriceLimit ? '1' : '0');
       p.set('goldCrossLimit', pms.goldCrossLimit ? '1' : '0');
       // 三字段日期规则：日/月 tradeDate；周/季 tradeDateMin + tradeDateMax
@@ -880,6 +946,21 @@ createApp({
     persistChartPrefs() {
       localStorage.setItem('ts_close_chart_on_query', this.closeChartOnQuery ? '1' : '0');
       localStorage.setItem('ts_show_latest_chart', this.showLatestChart ? '1' : '0');
+    },
+    // 查询参数面板持久化（params deep watcher 触发：改了即存，不等点查询）
+    persistQueryParams() {
+      localStorage.setItem('ts_query_params', JSON.stringify({ v: 1, ...this.params }));
+    },
+    // 纯前端状态（仅看涨/列设置/板块筛选）持久化
+    persistUiState() {
+      localStorage.setItem('ts_ui_state', JSON.stringify({
+        v: 1,
+        goldBullOnly: this.goldBullOnly,
+        signalBullOnly: this.signalBullOnly,
+        goldCols: this.goldCols,
+        signalCols: this.signalCols,
+        boardFilter: this.boardFilter
+      }));
     },
     onCloseChartPrefChange() {
       this.persistChartPrefs();

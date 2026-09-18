@@ -168,19 +168,24 @@
 
           <el-divider content-position="left">信号限制项</el-divider>
           <el-form-item label="上次金叉交汇上限">
-            <el-input-number v-model="params.lastGoldCrossMax" style="width: 140px"></el-input-number>
+            <el-input-number v-model="params.lastGoldCrossMax" :disabled="!params.lastGoldCrossMaxEnabled" style="width: 140px"></el-input-number>
+            <el-switch v-model="params.lastGoldCrossMaxEnabled" style="margin-left: 8px"></el-switch>
           </el-form-item>
           <el-form-item label="当前金叉交汇上限">
-            <el-input-number v-model="params.currGoldCrossMax" style="width: 140px"></el-input-number>
+            <el-input-number v-model="params.currGoldCrossMax" :disabled="!params.currGoldCrossMaxEnabled" style="width: 140px"></el-input-number>
+            <el-switch v-model="params.currGoldCrossMaxEnabled" style="margin-left: 8px"></el-switch>
           </el-form-item>
           <el-form-item label="死叉交汇上限">
-            <el-input-number v-model="params.lastDeathCrossMax" style="width: 140px"></el-input-number>
+            <el-input-number v-model="params.lastDeathCrossMax" :disabled="!params.lastDeathCrossMaxEnabled" style="width: 140px"></el-input-number>
+            <el-switch v-model="params.lastDeathCrossMaxEnabled" style="margin-left: 8px"></el-switch>
           </el-form-item>
           <el-form-item label="金叉最小间距">
-            <el-input-number v-model="params.goldInternalMin" :min="1" style="width: 140px"></el-input-number>
+            <el-input-number v-model="params.goldInternalMin" :min="1" :disabled="!params.goldInternalMinEnabled" style="width: 140px"></el-input-number>
+            <el-switch v-model="params.goldInternalMinEnabled" style="margin-left: 8px"></el-switch>
           </el-form-item>
           <el-form-item label="金叉最大间距">
-            <el-input-number v-model="params.goldInternalMax" :min="1" style="width: 140px"></el-input-number>
+            <el-input-number v-model="params.goldInternalMax" :min="1" :disabled="!params.goldInternalMaxEnabled" style="width: 140px"></el-input-number>
+            <el-switch v-model="params.goldInternalMaxEnabled" style="margin-left: 8px"></el-switch>
           </el-form-item>
           <el-form-item label="收盘价更低（开关）">
             <el-switch v-model="params.openClosePriceLimit"></el-switch>

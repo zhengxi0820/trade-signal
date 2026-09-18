@@ -145,3 +145,18 @@
 | R-20260901-04 | nextClose 端到端（本地真实库） | 本地 dev 库 11 股（日线 2023-08 起、物化表至 20260731） | curl 密钥登录后：日线截止 20260630 / 周线 0706~0710 / 月线 202606（单票+全市场）；默认无截止；全市场周线老截止 20250825~0829（切片<82 走批量兜底+读上界放宽路径） | nextClose 逐一等于库内下一期收盘（前复权行）：1193.01 / 1253.00 / 1350.60；无截止时全 null；老截止每股=20250905 周收盘（688981 例外=null，见 03） | 全部一致（与 stock_quote/stock_period_bar 库内核对）；**线上同口径复验**：zhengxi.online 周线 0706~0710 gold-cross 600519 nextClose=1253.00、all-stocks 默认周期 nextClose=null、全市场周线历史截止出参均有值 | 通过 |
 | R-20260901-05 | 初始加载/登录不自动查询 | 本地服务 + 浏览器 | 打开首页（未认证）；登录后观察三表状态 | 两种进入路径均不发 all-stocks/gold-cross/trade-signal 请求：三表显示"点击「查询」加载数据"、计数（0）、查询按钮亮橙点 | 未认证加载实测 ✓（无任何 /kdj 扫描请求 + 引导文案）；已认证加载与登录成功为同一 `initPeriods(true)` 代码路径（代码审查） | 通过（未认证实测 + 代码同径）/ 已认证路径待人工点验 |
 | R-20260901-06 | 「仅看涨」勾选框交互 | 已登录 + 点过查询 + 截止=历史周期 | 选历史截止→卡片头「列设置」左侧出现勾选框；勾选→列表与计数只留 nextClose>close；切回最新周期→勾选框隐藏且过滤失效 | 显隐正确、两框独立、计数联动、样式与现有勾选框一致 | 静态资源生效确认（线上首页含 bull-check ×2）；交互点击验证被浏览器自动化环境事件注入故障阻断 | 待人工点验（已发版，线上 zhengxi.online 直接点验；本地验证实例已停） |
+
+## 2026-09-17 补充用例（信号限制项五项开关 + 前端 localStorage 记忆）
+
+改动：①五个信号限制项（上次/当前金叉交汇上限、死叉交汇上限、金叉最小/最大间距）各加 `xxxEnabled` 开关（"1"=生效默认、"0"=该项不参与过滤，未传等同 "1"，老调用方行为不变）——`KDJParam` 新增 5 字段、`validateParam` 白名单、`fillTradeSignalDefaults` 缺省 SWITCH_ON、`scanCacheKey` 追加 key 段、`isTradeSignal` 四处守卫（死叉仅停用交汇上限，「恰好一次死叉」结构条件恒生效；间距 min/max 独立；回看窗口仍按 goldInternalMax 数值计算）、`withinCurrGoldCrossMax` 感知开关（currGoldCrossMaxEnabled=0 同时停用 series/gold-cross/all-stocks 的金叉标注过滤）；②前端五项各加 el-switch（关=输入框置灰），`buildQuery` 传 5 个开关；③前端 localStorage 记忆：`ts_query_params`（整个参数面板：KDJ 参数+五项数值+七个开关+复权，deep watcher 改了即存、初始化逐字段类型校验恢复）、`ts_ui_state`（仅看涨×2/列设置×2/板块筛选）——刷新/重开浏览器保留，清浏览器缓存才回默认；周期截止不记忆，保持自动最新；④文档同步 api.md 入参表+备注、需求 4.2 条件表+补充规则。
+
+| 编号 | 用例 | 前置 | 步骤 | 预期 | 实测 | 状态 |
+|---|---|---|---|---|---|---|
+| R-20260917-01 | 五个开关逐项 off 放行（handler 层） | 合成 K/D 序列（默认参数下为交易位） | KDJHandlerTest 新增 5 用例：每项限制设为必拦值，开关 "0" vs 不传/"1" | 开=拦下（false）、关=通过（true）；开关不传(null)=生效由既有用例（参数未设开关）覆盖 | 新增 5 用例全过 | 通过 |
+| R-20260917-02 | 开关缓存隔离 + 关开关对拍 | H2：6 股×7000 工作日 | KDJScanWindowCacheTest 新增 limitSwitchesGetDistinctCacheEntriesAndMatchReference：trade-signal 默认 vs goldInternalMaxEnabled=0 各两次；all-stocks currGoldCrossMax=1 vs =1+开关0 | 同参数 assertSame 命中缓存、开关不同 assertNotSame 不串缓存；关开关结果与基准直算（关同款开关）assertSameContent 一致；all-stocks 关开关后金叉标注不再受上限过滤 | 用例通过（14/14） | 通过 |
+| R-20260917-03 | 自动化测试套件 | 本地构建环境 | ./mvnw test | 全绿（60→69：handler +5、scan cache +2、校验 +1、series +1） | 69/69 通过 | 通过 |
+| R-20260917-04 | 入参白名单校验 | 服务运行 | 开关传非法值（如 lastGoldCrossMaxEnabled=2） | 400（validateParam requireEnum SWITCH_VALUES） | 新增 KDJParamSwitchValidationTest（5 开关 × {"2","true","on"} 均 400、"0"/"1"/不传放行）；线上冒烟 goldInternalMaxEnabled=2 → 400 | 通过 |
+| R-20260917-05 | 前端开关交互与传参 | 本地/线上已发版 | 关任一开关→输入框置灰、点查询→请求带 xxxEnabled=0、结果集变化且其余限制仍过滤 | disabled 联动正确；query 参数含 5 开关；trade-signal 结果符合"仅关该项"预期 | 线上静态资源已生效（首页/app.js 含 Enabled 代码）；后端开关传参行为见 R-08 实测；用户浏览器点击交互点验通过（2026-09-18） | 通过 |
+| R-20260917-06 | localStorage 记忆与恢复 | 浏览器 | 修改参数面板（含关开关）→刷新→重开浏览器→清站点数据 | 刷新/重开后参数面板与仅看涨/列设置/板块筛选完整恢复（F12 Application 可见 ts_query_params / ts_ui_state）；清缓存后回默认值；周期截止始终自动最新不记忆 | 用户浏览器实测：刷新后参数面板记忆正常恢复（2026-09-18，"刷新都还在"）；重开浏览器/清缓存路径同机制未单测 | 通过 |
+| R-20260917-07 | series 端点当前金叉开关 | 服务运行 | /kdj/series?code=xxx&currGoldCrossMax=1&currGoldCrossMaxEnabled=0 | 金叉标注不被上限=1 过滤（与不传 currGoldCrossMax 等价） | 新增 seriesCurrGoldCrossMaxSwitchMatchesUnlimited（H2 6 股：关开关与不限逐标注一致、生效时超限金叉全部降级且存在区分度）；线上 200 | 通过 |
+| R-20260917-08 | 线上五开关行为冒烟（2026-09-17 发版后，43.138.158.123 本机 8080） | jar 已替换重启（active/首页 200） | 密钥登录后：日线 trade-signal 全开 vs 逐个开关 =0 对比计数与子集关系；非法值 400；series 开关 200；同参重试 | 关任一开关交易位数 ≥ 全开（16 只）；全开结果是关 max 间距结果的子集；非法值 400；同参重试毫秒级（缓存 key 隔离且命中） | 全开 16 / 关上次金叉上限 51 / 关当前金叉上限 16 / 关死叉上限 18 / 关最小间距 28 / 关最大间距 18（子集 True、新增 2）；400；200/200；重试 0.0023s | 通过 |

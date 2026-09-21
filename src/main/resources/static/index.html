@@ -198,7 +198,10 @@
           <el-form-item label="点击查询后关闭KDJ和价格线图表" label-width="240px">
             <el-switch v-model="closeChartOnQuery" @change="onCloseChartPrefChange"></el-switch>
           </el-form-item>
-          <el-form-item label="查询历史周期时同步展示最新周期" label-width="240px">
+          <el-form-item label="展示历史周期" label-width="240px">
+            <el-switch v-model="showHistoryChart" @change="onHistoryPrefChange"></el-switch>
+          </el-form-item>
+          <el-form-item label="展示最新周期" label-width="240px">
             <el-switch v-model="showLatestChart" @change="onShowLatestPrefChange"></el-switch>
           </el-form-item>
 
@@ -253,7 +256,7 @@
         <div class="card-head">
           <span>金叉股票（{{ viewGoldCrossList.length }}）</span>
           <div class="head-tools">
-            <label v-if="!isLatestPeriod" class="bull-check">
+            <label v-if="!chartIsLatest" class="bull-check">
               <input type="checkbox" v-model="goldBullOnly">仅看涨
             </label>
             <el-popover placement="bottom-end" :width="160" trigger="click">
@@ -295,7 +298,7 @@
         <div class="card-head">
           <span>交易位股票（{{ viewTradeSignalList.length }}）</span>
           <div class="head-tools">
-            <label v-if="!isLatestPeriod" class="bull-check">
+            <label v-if="!chartIsLatest" class="bull-check">
               <input type="checkbox" v-model="signalBullOnly">仅看涨
             </label>
             <el-popover placement="bottom-end" :width="160" trigger="click">
@@ -333,19 +336,21 @@
     </el-card>
   </div>
 
-  <!-- 价格走势 + KDJ 联动图 -->
-  <el-card v-if="chartStock" class="chart-card" shadow="never" v-loading="loadingChart">
+  <!-- 价格走势 + KDJ 联动图（历史周期图 / 最新周期图按两项开关显隐，口径 = 查询快照） -->
+  <el-card v-if="chartStock && anyChartVisible" class="chart-card" shadow="never" v-loading="loadingChart">
     <template #header>
       <div class="chart-head">
         <span class="code-cell"><span v-if="badgeText(chartStock.boardType)" class="x-badge chart-badge" :class="'x-' + chartStock.boardType">{{ badgeText(chartStock.boardType) }}</span>{{ chartStock.code }}<template v-if="chartStock.name">&nbsp;{{ chartStock.name }}</template>&nbsp;&nbsp;价格走势 / KDJ</span>
-        <span class="period">{{ periodName }}</span>
+        <span class="period">{{ chartPeriodName }}</span>
       </div>
     </template>
-      <div class="chart-label"><b>截止周期</b>&nbsp;{{ cutoffPeriodLabel }}</div>
-      <div id="kdjChart"></div>
+      <template v-if="historyChartVisible">
+        <div class="chart-label"><b>截止周期</b>&nbsp;{{ chartCutoffLabel }}</div>
+        <div id="kdjChart"></div>
+      </template>
       <template v-if="latestChartVisible">
-        <div class="chart-divider"></div>
-        <div class="chart-label"><b>最新周期</b>&nbsp;{{ latestPeriodLabel }}</div>
+        <div class="chart-divider" v-if="historyChartVisible"></div>
+        <div class="chart-label"><b>最新周期</b>&nbsp;{{ chartLatestLabel }}</div>
         <div id="kdjChartLatest"></div>
       </template>
     </el-card>
@@ -355,6 +360,6 @@
 <script src="/vendor/index.full.min.js"></script>
 <script src="/vendor/zh-cn.min.js"></script>
 <script src="/vendor/echarts.min.js"></script>
-<script src="/js/app.js?v=19"></script>
+<script src="/js/app.js?v=20"></script>
 </body>
 </html>

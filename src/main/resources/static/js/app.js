@@ -136,9 +136,14 @@ createApp({
       ],
       // 周/月/季物化未就绪标记（后端 X-Data-Not-Ready 头）
       dataNotReady: false,
-      // 「其他参数」：点击查询后关闭图表 / 查询历史周期时同步展示最新周期（localStorage 持久化，纯 UI 偏好，不进查询）
+      // 「其他参数」：点击查询后关闭图表 / 展示历史周期图 / 展示最新周期图（localStorage 持久化，纯 UI 偏好，不进查询）
       closeChartOnQuery: localStorage.getItem('ts_close_chart_on_query') === '1',
+      showHistoryChart: localStorage.getItem('ts_show_history_chart') !== '0',
       showLatestChart: localStorage.getItem('ts_show_latest_chart') !== '0',
+      // 图表口径快照：loadLists 发起查询时固化本次查询参数与标签，点股票后的图表取数、
+      // 横轴/KDJ 标题、卡片标签、最新周期图截止、「仅看涨」基准一律按快照；
+      // 面板改了参数但未重新查询时，图表与已出列表严格一致
+      qSnapshot: null,
       // 有未应用的查询条件修改（点「查询」才发请求）
       queryDirty: false,
       // 已点过至少一次查询（控制空态文案：未查询时引导点击查询）
@@ -208,9 +213,29 @@ createApp({
       const q = Math.ceil(+String(latest.tradeDateMax).slice(4, 6) / 3);
       return this.quarterYear === y && +this.quarter === q;
     },
-    // 最新周期图是否展示：开关开 + 非最新截止
+    // ---- 图表口径（快照优先，未查询过时退回活状态）----
+    chartIsLatest() {
+      return this.qSnapshot ? this.qSnapshot.isLatest : this.isLatestPeriod;
+    },
+    chartPeriodName() {
+      return this.qSnapshot ? this.qSnapshot.kdjTypeName : this.periodName;
+    },
+    chartCutoffLabel() {
+      return this.qSnapshot ? this.qSnapshot.cutoffLabel : this.cutoffPeriodLabel;
+    },
+    chartLatestLabel() {
+      return this.qSnapshot ? this.qSnapshot.latestLabel : this.latestPeriodLabel;
+    },
+    // 历史周期图：开关开；或截止即最新且勾了「展示最新周期」（同一份数据只出一张图）
+    historyChartVisible() {
+      return this.showHistoryChart || (this.showLatestChart && this.chartIsLatest);
+    },
+    // 最新周期图：开关开 + 快照截止非最新（截止即最新时不重复出图）
     latestChartVisible() {
-      return this.showLatestChart && !this.isLatestPeriod;
+      return this.showLatestChart && !this.chartIsLatest;
+    },
+    anyChartVisible() {
+      return this.historyChartVisible || this.latestChartVisible;
     },
     // 截止周期图内联标签（与当前选择一致）
     cutoffPeriodLabel() {
@@ -446,11 +471,11 @@ createApp({
       if (this.boardFilter.length === 5) return list;
       return list.filter(s => this.boardFilter.includes(s.boardType));
     },
-    // 「仅看涨」过滤（勾选且非最新截止时生效）：下一周期收盘价 > 截止周期收盘价；
-    // nextClose 为 null = 下一期停牌或无下一期，视为不涨排除。截止切回最新周期时勾选框
-    // 隐藏，此处 isLatestPeriod 兜底保证过滤失效
+    // 「仅看涨」过滤（勾选且快照截止非最新时生效）：下一周期收盘价 > 截止周期收盘价；
+    // nextClose 为 null = 下一期停牌或无下一期，视为不涨排除。快照截止为最新周期时勾选框
+    // 隐藏，此处 chartIsLatest 兜底保证过滤失效
     _bullFilter(list, on) {
-      if (!on || this.isLatestPeriod) return list;
+      if (!on || this.chartIsLatest) return list;
       return list.filter(s => s.nextClose != null && s.nextClose > s.close);
     },
     toggleBoardAll() {
@@ -575,6 +600,18 @@ createApp({
     // ---- 三个列表 ----
     async loadLists() {
       const q = this.buildQuery().toString();
+      // 固化本次查询口径（发起查询那一刻的活状态即快照）：后续图表相关一切取数按此口径
+      const p0 = this.periods[0];
+      this.qSnapshot = {
+        qs: q,
+        kdjType: this.kdjType,
+        kdjTypeName: this.periodName,
+        cutoffLabel: this.cutoffPeriodLabel,
+        latestLabel: this.latestPeriodLabel,
+        isLatest: this.isLatestPeriod,
+        latest: p0 ? { tradeDate: p0.tradeDate, tradeDateMin: p0.tradeDateMin, tradeDateMax: p0.tradeDateMax } : null,
+        n: this.params.n, m1: this.params.m1, m2: this.params.m2
+      };
       this.querying = true;
       this.queryDirty = false;
       this.queried = true;
@@ -594,11 +631,16 @@ createApp({
         fill('/kdj/trade-signal?' + q, 'tradeSignalList', 'loadingSignal')
       ]);
       this.querying = false;
-      // 「其他参数」：点击查询后关闭图表；否则已选股票的图表跟随新参数刷新
+      // 「其他参数」：点击查询后关闭图表；否则已选股票的图表按新快照重取（两项开关均关则只清图）
       if (this.closeChartOnQuery) {
         this.closeCharts();
       } else if (this.chartStock) {
-        this.loadChart(this.chartStock.code);
+        if (this.anyChartVisible) {
+          this.loadChart(this.chartStock.code);
+        } else {
+          this.disposeCutChart();
+          this.disposeLatestChart();
+        }
       }
     },
 
@@ -609,6 +651,7 @@ createApp({
       if (from !== 'signal') this.$refs.signalTable.setCurrentRow();
       if (from !== 'all') this.$refs.allTable.setCurrentRow();
       this.chartStock = row;
+      if (!this.anyChartVisible) return; // 两项展示开关均关：只做行高亮，不出图表
       this.$nextTick(() => {
         this.loadChart(row.code);
         const el = document.querySelector('.chart-card');
@@ -624,14 +667,19 @@ createApp({
     async loadChart(code) {
       this.loadingChart = true;
       try {
-        const q = this.buildQuery();
-        q.set('code', code);
-        const rows = await getJson('/kdj/series?' + q.toString());
-        if (!rows.length) {
-          ElementPlus.ElMessage.warning(code + ' 无序列数据');
-          return;
+        // 截止周期序列：按快照口径取数；开关关则不出图（仅行高亮/最新图）
+        if (this.historyChartVisible) {
+          const q = this.qSnapshot ? new URLSearchParams(this.qSnapshot.qs) : this.buildQuery();
+          q.set('code', code);
+          const rows = await getJson('/kdj/series?' + q.toString());
+          if (!rows.length) {
+            ElementPlus.ElMessage.warning(code + ' 无序列数据');
+          } else {
+            this.renderChart(rows);
+          }
+        } else {
+          this.disposeCutChart();
         }
-        this.renderChart(rows);
         if (this.latestChartVisible) {
           this.loadLatestChart(code);
         } else {
@@ -645,11 +693,12 @@ createApp({
     },
 
     // ---- 图表 ----
-    // 周期标签：日 yyyy/mm/dd；周 min~max；月 yyyy/mm；季 2025Q1
+    // 周期标签（按快照 kdjType）：日 yyyy/mm/dd；周 min~max；月 yyyy/mm；季 2025Q1
     periodLabel(r) {
-      if (this.kdjType === '0') return fmtSlash(r.tradeDate);
-      if (this.kdjType === '1') return fmtSlash(r.tradeDateMin) + '~' + fmtSlash(r.tradeDateMax);
-      if (this.kdjType === '2') return fmtSlash(String(r.tradeDate).slice(0, 6));
+      const t = this.qSnapshot ? this.qSnapshot.kdjType : this.kdjType;
+      if (t === '0') return fmtSlash(r.tradeDate);
+      if (t === '1') return fmtSlash(r.tradeDateMin) + '~' + fmtSlash(r.tradeDateMax);
+      if (t === '2') return fmtSlash(String(r.tradeDate).slice(0, 6));
       const y = String(r.tradeDateMin).slice(0, 4);
       const q = Math.ceil(+String(r.tradeDateMax).slice(4, 6) / 3);
       return y + 'Q' + q;
@@ -669,8 +718,9 @@ createApp({
       inst.cd = { labels, bars, kdj };
 
       const last = kdj[kdj.length - 1];
-      // KDJ 标题：N/M1/M2 + 最新 K/D/J，各自着色（K 黄、D 紫、J 蓝）
-      const kdjTitle = '{t|KDJ(' + this.params.n + ',' + this.params.m1 + ',' + this.params.m2 + ')：}'
+      // KDJ 标题（按快照 n/m1/m2）：N/M1/M2 + 最新 K/D/J，各自着色（K 黄、D 紫、J 蓝）
+      const sp = this.qSnapshot || this.params;
+      const kdjTitle = '{t|KDJ(' + sp.n + ',' + sp.m1 + ',' + sp.m2 + ')：}'
         + ' {k|K:' + fmt2(last.k) + '} {d|D:' + fmt2(last.d) + '} {j|J:' + fmt2(last.j) + '}';
 
       // 默认视野：截止周期钉在最右端；数据不足一屏则左对齐展示全部
@@ -908,16 +958,18 @@ createApp({
       if (!this._charts[key]) this._charts[key] = { chart: null, cd: null, raf: null };
       return this._charts[key];
     },
-    // 最新周期序列：以 periods[0] 为截止（与 /kdj/periods 口径一致），复用同一套渲染
+    // 最新周期序列：以快照里的最新已完结周期为截止（与查询时刻 /kdj/periods 口径一致），复用同一套渲染
     async loadLatestChart(code) {
-      const latest = this.periods[0];
-      if (!latest) return;
-      const q = this.buildQuery();
+      const s = this.qSnapshot;
+      if (!s || !s.latest) return;
+      const q = new URLSearchParams(s.qs);
       q.set('code', code);
-      if (this.kdjType === '0') q.set('tradeDate', latest.tradeDate);
-      else if (this.kdjType === '1') { q.set('tradeDateMin', latest.tradeDateMin); q.set('tradeDateMax', latest.tradeDateMax); }
-      else if (this.kdjType === '2') q.set('tradeDate', latest.tradeDate);
-      else { q.set('tradeDateMin', latest.tradeDateMin); q.set('tradeDateMax', latest.tradeDateMax); }
+      if (s.kdjType === '0' || s.kdjType === '2') {
+        q.set('tradeDate', s.latest.tradeDate);
+      } else {
+        q.set('tradeDateMin', s.latest.tradeDateMin);
+        q.set('tradeDateMax', s.latest.tradeDateMax);
+      }
       try {
         const rows = await getJson('/kdj/series?' + q.toString());
         if (!rows.length) { this.disposeLatestChart(); return; }
@@ -926,10 +978,31 @@ createApp({
         this.disposeLatestChart();
       }
     },
+    disposeCutChart() {
+      const inst = this._charts && this._charts['cut'];
+      if (inst && inst.chart) inst.chart.dispose();
+      if (inst) inst.chart = null;
+    },
     disposeLatestChart() {
       const inst = this._charts && this._charts['latest'];
       if (inst && inst.chart) inst.chart.dispose();
       if (inst) inst.chart = null;
+    },
+    // 两项展示开关切换：可见但未渲染的 pane 补拉数，不可见的 dispose（已在屏的不重复取数）
+    refreshChartPanes() {
+      if (!this.chartStock) return;
+      this.$nextTick(() => {
+        if (this.historyChartVisible) {
+          if (!(this._charts.cut && this._charts.cut.chart)) this.loadChart(this.chartStock.code);
+        } else {
+          this.disposeCutChart();
+        }
+        if (this.latestChartVisible) {
+          if (!(this._charts.latest && this._charts.latest.chart)) this.loadLatestChart(this.chartStock.code);
+        } else {
+          this.disposeLatestChart();
+        }
+      });
     },
     // 关闭全部图表（「点击查询后关闭」与切换周期类型共用）
     closeCharts() {
@@ -945,6 +1018,7 @@ createApp({
     // 「其他参数」localStorage 持久化
     persistChartPrefs() {
       localStorage.setItem('ts_close_chart_on_query', this.closeChartOnQuery ? '1' : '0');
+      localStorage.setItem('ts_show_history_chart', this.showHistoryChart ? '1' : '0');
       localStorage.setItem('ts_show_latest_chart', this.showLatestChart ? '1' : '0');
     },
     // 查询参数面板持久化（params deep watcher 触发：改了即存，不等点查询）
@@ -965,16 +1039,14 @@ createApp({
     onCloseChartPrefChange() {
       this.persistChartPrefs();
     },
+    // 两项展示开关切换统一走这里：可见但未渲染的 pane 补拉数，不可见的 dispose
+    onHistoryPrefChange() {
+      this.persistChartPrefs();
+      this.refreshChartPanes();
+    },
     onShowLatestPrefChange() {
       this.persistChartPrefs();
-      if (!this.chartStock) return;
-      this.$nextTick(() => {
-        if (this.showLatestChart && this.latestChartVisible) {
-          this.loadLatestChart(this.chartStock.code);
-        } else {
-          this.disposeLatestChart();
-        }
-      });
+      this.refreshChartPanes();
     }
   }
 }).use(ElementPlus, { locale: ElementPlusLocaleZhCn }).mount('#app');

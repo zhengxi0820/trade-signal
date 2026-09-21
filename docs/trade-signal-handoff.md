@@ -1,7 +1,7 @@
 # 交接手册 — trade-signal（新 agent / 新人入场第一课）
 
 > 读完这份再动手。权威细节在各专项文档（见文末指针），本手册负责让你 10 分钟内知道系统长什么样、现在是什么状态、坑在哪。
-> 最近更新：2026-09-01（查询触发制补全：初始加载/登录不再自动扫描；金叉/交易位出参加 nextClose 严格下一期口径 + 前端「仅看涨」勾选框。前次：2026-08-26 历史截止查询性能修复：扫描兜底改物化表批量、单票 series 周/月/季改读物化表、批读加窗口下界；run_daily 闸门 3 天 → 2 天。前次：2026-08-16 周期完结口径改"最后一个交易日数据到位即完结"+ work_day 未来日历种子/每小时对账；run_daily 支持 FORCE=1 人工触发；物化准确性修复）。
+> 最近更新：2026-09-21（图表口径快照修复：点股票后的图表/标签/仅看涨一律按 `loadLists` 时的 `qSnapshot` 取数，修「查询后改周期不点查询图表串口径」缺陷；「展示历史周期/展示最新周期」两项独立开关替代原单项开关，截止=最新一律单图。前次：2026-09-17 信号限制项五项开关 + `ts_query_params`/`ts_ui_state` localStorage 记忆。前次：2026-09-01 查询触发制补全 + nextClose 严格下一期 + 「仅看涨」勾选框。前次：2026-08-26 历史截止查询性能修复 + run_daily 闸门 2 天）。
 
 ## 1. 这是什么
 
@@ -48,7 +48,7 @@ flock 防重叠 → 探针（600519 最新交易日 ≤ 主表水位、或距水
 ```bash
 ./mvnw test                 # 本地全部测试（H2，不连真库）
 # 发版
-./mvnw package -DskipTests  # 注意先杀掉本地 8082 验证实例，否则 Windows 文件锁打包失败
+./mvnw package -DskipTests  # 注意先杀干净本地验证实例（默认 8080；任务停掉后 java 子进程可能残留，netstat 确认），否则 Windows 文件锁打包失败
 scp target/trade-signal-0.0.1-SNAPSHOT.jar ops@43.138.158.123:/home/ops/
 ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-*.jar /opt/trade-signal/app.jar && sudo systemctl restart trade-signal'
 # 日志 / 缓存 / 预热 / 备份：见 docs/trade-signal-deployment.md 常用操作节
@@ -65,6 +65,7 @@ ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-*.jar /opt/trade-signal/a
 - MySQL `innodb_buffer_pool_size` 默认 128M，11GB 的表全市场扫描全走磁盘——已调 768M（`/etc/mysql/mysql.conf.d/zz-trade-signal.cnf`）
 - **增量物化窗口 cutoff 必须对齐周期边界**（2026-08-14 曾因 cutoff 落在周中把全市场 07-20 周截成单日 bar 并覆盖正确行，导致金叉误筛）；改过 `period_bar.py` 后先跑 `scripts/tests/test_period_bar.py`
 - **物化写入必须"先删后插"**：upsert 按 PERIOD_END 键，数据后补会插新行留旧行（600635 同周期两行事故）
+- **前端图表相关逻辑一律读查询快照（`qSnapshot`/`chartIsLatest`），不读面板活状态**（2026-09-21 串口径缺陷根因：查询触发制下面板与已出列表可以不一致）
 
 ## 8. 当前待办 / 已知边界
 
@@ -75,7 +76,7 @@ ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-*.jar /opt/trade-signal/a
 - [ ] 延期判定路径（除权日附近）尚无真实案例压测
 - [ ] 可选：每周低频全历史一致性校验（先按每股哈希快筛、不一致再细修，成本 ~2.5h）
 - 日线冷算 ~8 分钟是大表 IO 物理下限（每周预热承担一次，用户无感）
-- 用户体系无权限/角色、无 token 主动吊销（STATUS 只拦登录）——需要时再立
+- 用户体系无权限/角色（需要时再立）；token 已支持服务端吊销（2026-08-19 起，禁用/改密即失效，60s 缓存）
 
 ## 9. 文档指针
 
@@ -89,5 +90,5 @@ ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-*.jar /opt/trade-signal/a
 | `docs/trade-signal-deployment.md` | 运维（发版/备份/里程碑） |
 | `docs/SECURITY.md` | 安全基线（上线检查单 3.1） |
 | `scripts/README.md` | 管线命令用法 |
-| `docs/prototype/` | UI 原型留档（登录页、自选股导航、板块筛选、股票徽标、KDJ 图表同步、登出 UI 等，`ls` 看全量；最新两个 `kdj-chart-sync-prototype.html`、`logout-ui-prototype.html` 尚未 git add） |
+| `docs/prototype/` | UI 原型留档（登录页、自选股导航、板块筛选、股票徽标、KDJ 图表同步、登出 UI 等，`ls` 看全量） |
 | `docs/security-review-20260819.md` | 安全审查报告（发现清单与修复优先级） |

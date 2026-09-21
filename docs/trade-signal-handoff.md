@@ -69,7 +69,6 @@ ssh ops@43.138.158.123 'sudo cp /home/ops/trade-signal-*.jar /opt/trade-signal/a
 
 ## 8. 当前待办 / 已知边界
 
-- [ ] 前端「仅看涨」勾选框交互人工点验（2026-09-01：浏览器自动化事件注入故障未点完，本地 `localhost:8080` 起着服务，uitest/uitest1234 或密钥 devkey-12345）
 - [ ] 腾讯云控制台手动打干净基线快照（提醒用户）
 - [ ] 前端「数据更新至 yyyymmdd」展示（原型先行）
 - [ ] 退市股清理（stock_info 不自动剔除退市股，增量抓空无害但会累积）
